@@ -58,6 +58,7 @@ android.useAndroidX=true
 android.enableJetifier=true
 org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=512m
 android.nonTransitiveRClass=true
+kotlin.stdlib.default.dependency=false
 EOF
 
 # --- 6. SETTINGS.GRADLE ---
@@ -125,18 +126,37 @@ android {
 
     packaging {
         resources {
-            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/NOTICE']
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/NOTICE',
+                'META-INF/*.kotlin_module'
+            ]
+            pickFirsts += [
+                'META-INF/AL2.0',
+                'META-INF/LGPL2.1'
+            ]
         }
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        // Kotlin stdlib çakışmasını çöz — tek sürüme sabitle
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.8.22'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+    }
+}
+
 dependencies {
-    // Firebase BOM — 32.7.4 GMS 4.3.x ile uyumlu
     implementation platform('com.google.firebase:firebase-bom:32.7.4')
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
     implementation 'androidx.core:core:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
 EOF
 
