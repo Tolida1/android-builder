@@ -1,0 +1,153 @@
+name: Build Android App
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner_id:           { description: 'Firebase User ID',       required: true }
+      app_id:             { description: 'App ID (Firestore key)', required: true }
+      app_name:           { description: 'Uygulama Adı',           required: true }
+      package_name:       { description: 'Paket Adı',              required: true }
+      version_code:       { description: 'Version Code',           required: true,  default: '1' }
+      version_name:       { description: 'Version Name',           required: true,  default: '1.0' }
+      primary_color:      { description: 'Ana Renk',               required: false, default: '#2196F3' }
+      primary_dark_color: { description: 'Koyu Renk',              required: false, default: '#1565C0' }
+      accent_color:       { description: 'Vurgu Rengi',            required: false, default: '#FF4081' }
+      content_url:        { description: 'İçerik URL',             required: false, default: 'https://example.com' }
+      icon_url:           { description: 'İkon URL',               required: false, default: '' }
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'build-tools;34.0.0 platforms;android-34'
+
+      # ── APK + AAB Build ───────────────────────────────────
+      - name: Build
+        env:
+          OWNER_ID:             ${{ github.event.inputs.owner_id }}
+          APP_ID:               ${{ github.event.inputs.app_id }}
+          APP_NAME:             ${{ github.event.inputs.app_name }}
+          PACKAGE_NAME:         ${{ github.event.inputs.package_name }}
+          VERSION_CODE:         ${{ github.event.inputs.version_code }}
+          VERSION_NAME:         ${{ github.event.inputs.version_name }}
+          PRIMARY_COLOR:        ${{ github.event.inputs.primary_color }}
+          PRIMARY_DARK_COLOR:   ${{ github.event.inputs.primary_dark_color }}
+          ACCENT_COLOR:         ${{ github.event.inputs.accent_color }}
+          CONTENT_URL:          ${{ github.event.inputs.content_url }}
+          ICON_URL:             ${{ github.event.inputs.icon_url }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          chmod +x build_app.sh && bash build_app.sh
+
+      # ── Firebase Storage'a yükle ──────────────────────────
+      - name: Upload to Firebase Storage
+        if: success()
+        env:
+          FIREBASE_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_SA_KEY:  ${{ secrets.FIREBASE_SA_KEY }}
+          OWNER_ID:         ${{ github.event.inputs.owner_id }}
+          APP_ID:           ${{ github.event.inputs.app_id }}
+          PACKAGE_NAME:     ${{ github.event.inputs.package_name }}
+          VERSION_CODE:     ${{ github.event.inputs.version_code }}
+        run: |
+          # Service account ile token al
+          echo "$FIREBASE_SA_KEY" > /tmp/sa.json
+          pip install google-auth --quiet
+
+          TOKEN=$(python3 << 'PYEOF'
+          import google.auth
+          import google.auth.transport.requests
+          from google.oauth2 import service_account
+          creds = service_account.Credentials.from_service_account_file(
+              '/tmp/sa.json',
+              scopes=['https://www.googleapis.com/auth/devstorage.read_write',
+                      'https://www.googleapis.com/auth/datastore']
+          )
+          creds.refresh(google.auth.transport.requests.Request())
+          print(creds.token)
+          PYEOF
+          )
+
+          APK="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.apk"
+          AAB="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.aab"
+          BUCKET="${FIREBASE_PROJECT}.appspot.com"
+          BASE="builds/${OWNER_ID}/${APP_ID}/v${VERSION_CODE}"
+
+          # APK upload
+          curl -s -X POST \
+            "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${BASE}/app.apk" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @"$APK"
+
+          # AAB upload
+          curl -s -X POST \
+            "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${BASE}/app.aab" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @"$AAB"
+
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+          echo "BUCKET=$BUCKET" >> $GITHUB_ENV
+          echo "STORAGE_BASE=$BASE" >> $GITHUB_ENV
+
+      # ── Firestore: buildStatus = ready ───────────────────
+      - name: Firestore Update Success
+        if: success()
+        env:
+          FIREBASE_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          OWNER_ID:         ${{ github.event.inputs.owner_id }}
+          APP_ID:           ${{ github.event.inputs.app_id }}
+          VERSION_CODE:     ${{ github.event.inputs.version_code }}
+        run: |
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          APK_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/$(python3 -c "import urllib.parse; print(urllib.parse.quote('${STORAGE_BASE}/app.apk'))")?alt=media"
+          AAB_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/$(python3 -c "import urllib.parse; print(urllib.parse.quote('${STORAGE_BASE}/app.aab'))")?alt=media"
+
+          curl -s -X PATCH \
+            "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus&updateMask.fieldPaths=apkUrl&updateMask.fieldPaths=aabUrl&updateMask.fieldPaths=builtAt&updateMask.fieldPaths=versionCode" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"fields\": {
+                \"buildStatus\": {\"stringValue\": \"ready\"},
+                \"apkUrl\":      {\"stringValue\": \"${APK_URL}\"},
+                \"aabUrl\":      {\"stringValue\": \"${AAB_URL}\"},
+                \"builtAt\":     {\"timestampValue\": \"${NOW}\"},
+                \"versionCode\": {\"integerValue\": \"${VERSION_CODE}\"}
+              }
+            }"
+
+      - name: Firestore Update Failed
+        if: failure()
+        env:
+          FIREBASE_PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_SA_KEY:  ${{ secrets.FIREBASE_SA_KEY }}
+          OWNER_ID:         ${{ github.event.inputs.owner_id }}
+          APP_ID:           ${{ github.event.inputs.app_id }}
+        run: |
+          echo "$FIREBASE_SA_KEY" > /tmp/sa.json
+          pip install google-auth --quiet
+          TOKEN=$(python3 -c "
+          from google.oauth2 import service_account
+          import google.auth.transport.requests
+          c = service_account.Credentials.from_service_account_file('/tmp/sa.json',scopes=['https://www.googleapis.com/auth/datastore'])
+          c.refresh(google.auth.transport.requests.Request())
+          print(c.token)")
+
+          curl -s -X PATCH \
+            "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"fields":{"buildStatus":{"stringValue":"failed"}}}'
