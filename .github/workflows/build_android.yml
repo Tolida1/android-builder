@@ -81,7 +81,7 @@ jobs:
 
           APK="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.apk"
           AAB="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.aab"
-          BUCKET="${FIREBASE_PROJECT}.appspot.com"
+          BUCKET="${FIREBASE_PROJECT}.firebasestorage.app"
           BASE="builds/${OWNER_ID}/${APP_ID}/v${VERSION_CODE}"
 
           # APK upload
@@ -112,6 +112,7 @@ jobs:
           VERSION_CODE:     ${{ github.event.inputs.version_code }}
         run: |
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BUCKET="${FIREBASE_PROJECT}.firebasestorage.app"
           APK_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/$(python3 -c "import urllib.parse; print(urllib.parse.quote('${STORAGE_BASE}/app.apk'))")?alt=media"
           AAB_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/$(python3 -c "import urllib.parse; print(urllib.parse.quote('${STORAGE_BASE}/app.aab'))")?alt=media"
 
