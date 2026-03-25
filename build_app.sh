@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================
-# build_app.sh — Firebase Entegreli Android Builder (v2.3 - Bug Fixed)
+# build_app.sh — Firebase Entegreli Android Builder (v2.4 - AndroidX Fixed)
 # ============================================================
 set -e
 
 echo "=========================================="
 echo "  BUILD START: $APP_NAME ($PACKAGE_NAME)"
-echo "  Target: $APP_ID | SDK: 34"
+echo "  Target: $APP_ID | Location: Cizre"
 echo "=========================================="
 
 # ── 1. ORTAM HAZIRLIĞI ────────────────────────────────────────
@@ -34,7 +34,15 @@ PACKAGE_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 mkdir -p app/src/main/java/$PACKAGE_PATH
 mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi,layout}
 
-# ── 3. JAVA DOSYALARI ─────────────────────────────────────────
+# ── 3. GRADLE PROPERTIES (KRİTİK HATA ÇÖZÜMÜ) ─────────────────
+# Hata mesajında istenen AndroidX ayarlarını burada yapıyoruz.
+cat > gradle.properties << 'EOF'
+android.useAndroidX=true
+android.enableJetifier=true
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+EOF
+
+# ── 4. JAVA DOSYALARI ─────────────────────────────────────────
 cat > app/src/main/java/$PACKAGE_PATH/MainActivity.java << JAVA_EOF
 package ${PACKAGE_NAME};
 
@@ -130,7 +138,7 @@ public class MyFCMService extends FirebaseMessagingService {
 }
 JAVA_EOF
 
-# ── 4. MANIFEST & RESOURCES ──────────────────────────────────
+# ── 5. MANIFEST & RESOURCES ──────────────────────────────────
 cat > app/src/main/AndroidManifest.xml << MANIFEST_EOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${PACKAGE_NAME}">
@@ -157,7 +165,7 @@ MANIFEST_EOF
 
 echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">'"${APP_NAME}"'</string></resources>' > app/src/main/res/values/strings.xml
 
-# ── 5. GRADLE CONFIGURATION (DÜZELTİLMİŞ) ──────────────────────
+# ── 6. GRADLE CONFIGURATION ──────────────────────────────────
 cat > build.gradle << 'EOF'
 buildscript {
     repositories { google(); mavenCentral() }
@@ -192,9 +200,6 @@ android {
         multiDexEnabled true
     }
 
-    // ==========================================
-    // HATA ÇÖZÜMÜ: NATIVE LIBS & RESOURCE MERGE
-    // ==========================================
     packaging {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
@@ -229,18 +234,18 @@ dependencies {
 }
 EOF
 
-# ── 6. GOOGLE SERVICES JSON ──────────────────────────────────
+# ── 7. GOOGLE SERVICES JSON ──────────────────────────────────
 if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-    echo "HATA: GOOGLE_SERVICES_JSON bulunamadı!"
+    echo "HATA: GOOGLE_SERVICES_JSON eksik!"
     exit 1
 fi
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
 
-# ── 7. BUILD İŞLEMİ ──────────────────────────────────────────
+# ── 8. BUILD İŞLEMİ ──────────────────────────────────────────
 echo "Build başlatılıyor..."
 gradle clean assembleRelease --stacktrace
 
-# ── 8. ÇIKTI KONTROLÜ ────────────────────────────────────────
+# ── 9. ÇIKTI KONTROLÜ ────────────────────────────────────────
 APK_FILE="app/build/outputs/apk/release/app-release-unsigned.apk"
 if [ -f "$APK_FILE" ]; then
     echo "=========================================="
