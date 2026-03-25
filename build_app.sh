@@ -1,15 +1,15 @@
 #!/bin/bash
 # ==============================================================================
-# build_app.sh — MASTER FACTORY v6.0 (Gradle 9.4 & AGP 8.2 & GS 4.4.1)
+# build_app.sh — MASTER FACTORY v7.0 (Gradle 9.4 & AGP 8.2 & GS 4.4.2)
 # ==============================================================================
 set -e
 
-# --- 1. SİSTEM YOLLARI VE HAZIRLIK ---
+# --- 1. SİSTEM YOLLARI ---
 ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tail -1)
 export PATH="$BUILD_TOOLS_DIR:$ANDROID_SDK/platform-tools:$PATH"
 
-# --- 2. İZOLASYONLU ÇALIŞMA ALANI ---
+# --- 2. TEMİZ ÇALIŞMA ALANI ---
 WORKSPACE="/tmp/factory_build_${APP_ID}_$$"
 rm -rf "$WORKSPACE"
 mkdir -p "$WORKSPACE"
@@ -19,8 +19,8 @@ PACKAGE_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 mkdir -p app/src/main/java/$PACKAGE_PATH
 mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi}
 
-# --- 3. FIREBASE JSON PATCHER (PYTHON) ---
-# Tek bir Firebase projesini her pakete uydurmak için dinamik yama yapar
+# --- 3. FIREBASE JSON PATCHER ---
+# Tek JSON'u binlerce pakete uyarlayan dinamik yama
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
 python3 -c "
 import json, sys
@@ -31,57 +31,45 @@ try:
         client['client_info']['android_client_info']['package_name'] = '$PACKAGE_NAME'
     with open('app/google-services.json', 'w') as f:
         json.dump(data, f, indent=4)
-except Exception as e:
+except Exception:
     sys.exit(1)
 "
 
 # --- 4. GRADLE PROPERTIES ---
-# Hafıza ve modern Gradle 9 izolasyon ayarları
 cat > gradle.properties << EOF
 android.useAndroidX=true
 android.enableJetifier=true
 org.gradle.jvmargs=-Xmx4096m
 android.nonTransitiveRClass=true
 android.nonFinalResIds=false
-android.defaults.buildfeatures.buildconfig=true
 EOF
 
-# --- 5. SETTINGS GRADLE (KRİTİK ÇÖZÜM) ---
-# Bağımlılık çözümlemesini merkezi hale getirerek eklenti çakışmasını önler
+# --- 5. SETTINGS GRADLE ---
 cat > settings.gradle << 'EOF'
 pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
-    repositories {
-        google()
-        mavenCentral()
-    }
+    repositories { google(); mavenCentral() }
 }
 rootProject.name = "app"
 include ':app'
 EOF
 
-# --- 6. ROOT BUILD.GRADLE ---
+# --- 6. ROOT BUILD.GRADLE (GS 4.4.2 - Gradle 9 Desteği) ---
 cat > build.gradle << 'EOF'
 buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
+    repositories { google(); mavenCentral() }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.2.2'
-        classpath 'com.google.gms:google-services:4.4.1'
+        // Gradle 9 ile daha uyumlu olan 4.4.2 sürümüne geçtik
+        classpath 'com.google.gms:google-services:4.4.2'
     }
 }
 EOF
 
-# --- 7. APP BUILD.GRADLE (MUTATION ERROR FIX) ---
+# --- 7. APP BUILD.GRADLE (BOM KALDIRILDI - SABİT SÜRÜM) ---
 cat > app/build.gradle << EOF
 apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'
@@ -101,11 +89,7 @@ android {
 
     packaging {
         resources {
-            excludes += '/META-INF/{AL2.0,LGPL2.1}'
-            excludes += 'META-INF/DEPENDENCIES'
-            excludes += 'META-INF/LICENSE*'
-            excludes += 'META-INF/NOTICE*'
-            excludes += 'META-INF/*.kotlin_module'
+            excludes += 'META-INF/*'
         }
         jniLibs {
             pickFirsts += '**/libc++_shared.so'
@@ -118,22 +102,19 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
 }
 
 dependencies {
-    implementation platform('com.google.firebase:firebase-bom:32.7.4')
-    implementation 'com.google.firebase:firebase-firestore'
-    implementation 'com.google.firebase:firebase-messaging'
+    // BOM (Platform) kullanımını sildik. 
+    // Hata veren 'Mutation' olayını tetikleyen şey BOM üzerinden yapılan sürüm hizalamasıdır.
+    // Sabit sürümler kullanarak Gradle'ın build sırasında liste değiştirmesini engelliyoruz.
+    implementation 'com.google.firebase:firebase-firestore:24.10.3'
+    implementation 'com.google.firebase:firebase-messaging:23.4.1'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.multidex:multidex:2.0.1'
 }
 
-// Google Services'in classpath'i bozmasını engellemek için versiyon kontrolünü kapatıyoruz
+// Google Services'in sürüm hizalama özelliğini kapatıyoruz
 googleServices { disableVersionCheck = true }
 EOF
 
@@ -151,7 +132,6 @@ public class MainActivity extends Activity {
         WebView wv = new WebView(this);
         setContentView(wv);
         wv.getSettings().setJavaScriptEnabled(true);
-        wv.getSettings().setDomStorageEnabled(true);
         wv.setWebViewClient(new WebViewClient());
         wv.loadUrl("${CONTENT_URL:-https://google.com}");
     }
@@ -173,18 +153,18 @@ cat > app/src/main/AndroidManifest.xml << MANIFEST_EOF
 </manifest>
 MANIFEST_EOF
 
-echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">'"${APP_NAME}"'</string></resources>' > app/src/main/res/values/strings.xml
+echo '<resources><string name="app_name">'"${APP_NAME}"'</string></resources>' > app/src/main/res/values/strings.xml
 
 # --- 9. BUILD ---
-echo "🏗️ Gradle 9.4 Serbest Stil Build Başlatılıyor..."
-# --no-daemon kullanarak her build'de taze bir JVM başlatıyoruz
-gradle clean assembleRelease --stacktrace --no-daemon
+echo "🏗️ Gradle 9.4 Atomik Build Başlatılıyor..."
+# --no-daemon ve --parallel=false ile çakışmaları minimize ediyoruz
+gradle clean assembleRelease --stacktrace --no-daemon --no-configuration-cache
 
 # --- 10. ÇIKTI ---
 APK_OUT="app/build/outputs/apk/release/app-release-unsigned.apk"
 if [ -f "$APK_OUT" ]; then
     echo "=========================================="
-    echo "✅ FABRİKA APK'YI BASTI: $APK_OUT"
+    echo "✅ FABRİKA APK'YI ÜRETTİ: $APK_OUT"
     echo "=========================================="
 else
     echo "❌ HATA: Build başarısız."
