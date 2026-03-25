@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# build_app.sh — Firebase Entegreli Android Builder (v2.2 - Full & Fixed)
+# build_app.sh — Firebase Entegreli Android Builder (v2.3 - Bug Fixed)
 # ============================================================
 set -e
 
@@ -34,7 +34,7 @@ PACKAGE_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 mkdir -p app/src/main/java/$PACKAGE_PATH
 mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi,layout}
 
-# ── 3. JAVA DOSYALARI (WebView + Firebase) ────────────────────
+# ── 3. JAVA DOSYALARI ─────────────────────────────────────────
 cat > app/src/main/java/$PACKAGE_PATH/MainActivity.java << JAVA_EOF
 package ${PACKAGE_NAME};
 
@@ -157,7 +157,7 @@ MANIFEST_EOF
 
 echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">'"${APP_NAME}"'</string></resources>' > app/src/main/res/values/strings.xml
 
-# ── 5. GRADLE CONFIGURATION (KRİTİK HATA DÜZELTMESİ) ──────────
+# ── 5. GRADLE CONFIGURATION (DÜZELTİLMİŞ) ──────────────────────
 cat > build.gradle << 'EOF'
 buildscript {
     repositories { google(); mavenCentral() }
@@ -192,9 +192,9 @@ android {
         multiDexEnabled true
     }
 
-    # ==========================================
-    # HATA ÇÖZÜMÜ: NATIVE LIBS & RESOURCE MERGE
-    # ==========================================
+    // ==========================================
+    // HATA ÇÖZÜMÜ: NATIVE LIBS & RESOURCE MERGE
+    // ==========================================
     packaging {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
@@ -231,7 +231,7 @@ EOF
 
 # ── 6. GOOGLE SERVICES JSON ──────────────────────────────────
 if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-    echo "HATA: GOOGLE_SERVICES_JSON boş olamaz!"
+    echo "HATA: GOOGLE_SERVICES_JSON bulunamadı!"
     exit 1
 fi
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
@@ -243,10 +243,10 @@ gradle clean assembleRelease --stacktrace
 # ── 8. ÇIKTI KONTROLÜ ────────────────────────────────────────
 APK_FILE="app/build/outputs/apk/release/app-release-unsigned.apk"
 if [ -f "$APK_FILE" ]; then
-    echo "------------------------------------------"
+    echo "=========================================="
     echo " BAŞARILI: $APK_FILE"
-    echo "------------------------------------------"
+    echo "=========================================="
 else
-    echo "Build başarısız oldu!"
+    echo "Build başarısız!"
     exit 1
 fi
