@@ -136,6 +136,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'
 
 android {
+    namespace "${PACKAGE_NAME}"
     compileSdkVersion 34
     defaultConfig {
         applicationId "${PACKAGE_NAME}"
@@ -170,6 +171,14 @@ EOF
 
 # ── BUILD + İMZALA ───────────────────────────────────────────
 echo "Gradle build başlıyor..."
+
+# Android SDK tool yollarını bul
+ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tail -1)
+export PATH="$BUILD_TOOLS_DIR:$PATH"
+
+echo "Build tools: $BUILD_TOOLS_DIR"
+
 gradle assembleRelease bundleRelease --no-daemon -q 2>&1 | tail -20
 
 APK_OUT="/tmp/${PACKAGE_NAME}_v${VERSION_CODE:-1}.apk"
@@ -182,8 +191,11 @@ keytool -genkey -v \
   -dname "CN=Android,OU=Android,O=Android,L=Android,S=Android,C=US" \
   -noprompt 2>/dev/null
 
-zipalign -v 4 "$BUILD_DIR/app/build/outputs/apk/release/app-release-unsigned.apk" /tmp/aligned.apk
-apksigner sign \
+"$BUILD_TOOLS_DIR/zipalign" -v 4 \
+  "$BUILD_DIR/app/build/outputs/apk/release/app-release-unsigned.apk" \
+  /tmp/aligned.apk
+
+"$BUILD_TOOLS_DIR/apksigner" sign \
   --ks /tmp/ks.jks --ks-key-alias release \
   --ks-pass pass:android --key-pass pass:android \
   --out "$APK_OUT" /tmp/aligned.apk
