@@ -1,27 +1,21 @@
 #!/bin/bash
 # ==============================================================================
-# build_app.sh — PROFESYONEL ANDROID FABRİKASI (Hatasız Seri Üretim)
-# Sürüm: 3.1 | Durum: Tüm Gradle Karakter Hataları Giderildi
+# build_app.sh — MASTER FABRİKA (Gradle 9.x & Firebase Sync v4.0)
 # ==============================================================================
 set -e
 
 echo "==========================================================="
-echo "  🛠️  UYGULAMA FABRİKASI ÇALIŞIYOR"
+echo "  🚀 SERİ ÜRETİM HATTI AKTİF"
 echo "  📦 Paket: $PACKAGE_NAME"
-echo "  🏷️  Ad: $APP_NAME"
+echo "  📍 Konum: Cizre | Sistem: Gradle 9.4"
 echo "==========================================================="
 
-# ── 1. ORTAM VE SDK YOLLARI ──────────────────────────────────────────────────
+# ── 1. SDK VE PATH AYARLARI ──────────────────────────────────────────────────
 ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tail -1)
 export PATH="$BUILD_TOOLS_DIR:$ANDROID_SDK/platform-tools:$PATH"
 
-if [ -z "$BUILD_TOOLS_DIR" ]; then
-    echo "❌ HATA: Android Build Tools bulunamadı!"
-    exit 1
-fi
-
-# ── 2. ÇALIŞMA ALANI HAZIRLIĞI ──────────────────────────────────────────────
+# ── 2. ÇALIŞMA ALANI TEMİZLİĞİ ───────────────────────────────────────────────
 WORKSPACE="/tmp/factory_build_${APP_ID}_$$"
 rm -rf "$WORKSPACE"
 mkdir -p "$WORKSPACE"
@@ -29,10 +23,10 @@ cd "$WORKSPACE"
 
 PACKAGE_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 mkdir -p app/src/main/java/$PACKAGE_PATH
-mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi,layout}
+mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi}
 
-# ── 3. FIREBASE JSON PATCHER (Dinamik Paket İsmi Değiştirici) ────────────────
-echo "⚙️ Firebase JSON yamalanıyor..."
+# ── 3. FIREBASE JSON PATCHER (Dinamik Kimlik Enjeksiyonu) ────────────────────
+echo "⚙️ Firebase JSON yapılandırılıyor..."
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
 
 python3 -c "
@@ -40,25 +34,28 @@ import json, sys
 try:
     with open('app/google-services.json', 'r') as f:
         data = json.load(f)
+    # Tüm client kayıtlarını verilen PACKAGE_NAME ile değiştir
     for client in data.get('client', []):
         client['client_info']['android_client_info']['package_name'] = '$PACKAGE_NAME'
     with open('app/google-services.json', 'w') as f:
         json.dump(data, f, indent=4)
-    print('✅ Firebase JSON paket adı uyarlandı.')
+    print('✅ JSON başarıyla güncellendi.')
 except Exception as e:
     print(f'❌ JSON hatası: {e}')
     sys.exit(1)
 "
 
-# ── 4. AYAR DOSYALARI (AndroidX & Gradle) ────────────────────────────────────
+# ── 4. ROOT AYARLARI (Gradle 9 Uyumu) ────────────────────────────────────────
 cat > gradle.properties << EOF
 android.useAndroidX=true
 android.enableJetifier=true
 org.gradle.jvmargs=-Xmx4096m
+# Gradle 9'un katı kuralları için ek ayarlar
+android.nonTransitiveRClass=true
+android.nonFinalResIds=false
 EOF
 
 cat > build.gradle << 'EOF'
-// Kök build dosyası
 buildscript {
     repositories { google(); mavenCentral() }
     dependencies {
@@ -70,16 +67,15 @@ allprojects { repositories { google(); mavenCentral() } }
 EOF
 
 cat > settings.gradle << 'EOF'
-// Proje ayarları
 rootProject.name = "app"
 include ':app'
 EOF
 
-# ── 5. APP BUILD.GRADLE (KRİTİK HATA DÜZELTİLDİ) ─────────────────────────────
+# ── 5. APP BUILD.GRADLE (Kritik Sıralama Düzeltildi) ──────────────────────────
 cat > app/build.gradle << EOF
 plugins {
     id 'com.android.application'
-    id 'com.google.gms.google-services'
+    // Firebase eklentisi burada değil, en altta tanımlanacak (Mutation hatası çözümü)
 }
 
 android {
@@ -95,7 +91,6 @@ android {
         multiDexEnabled true
     }
 
-    // ÇAKIŞAN KÜTÜPHANELERİ VE DOSYALARI TEMİZLER (DÜZELTİLDİ)
     packaging {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
@@ -105,7 +100,6 @@ android {
             excludes += 'META-INF/*.kotlin_module'
         }
         jniLibs {
-            // libc++_shared.so çakışmasını engeller
             pickFirsts += '**/libc++_shared.so'
         }
     }
@@ -124,15 +118,19 @@ android {
 }
 
 dependencies {
+    // Firebase BOM en üste gelmeli
     implementation platform('com.google.firebase:firebase-bom:32.7.4')
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.multidex:multidex:2.0.1'
 }
+
+// KRİTİK: Google Services eklentisini en sona koyarak bağımlılık kilitlenmesini (Mutation Error) önlüyoruz
+apply plugin: 'com.google.gms.google-services'
 EOF
 
-# ── 6. JAVA VE MANIFEST ──────────────────────────────────────────────────────
+# ── 6. JAVA VE MANIFEST (Manifest Package Silindi) ───────────────────────────
 cat > app/src/main/java/$PACKAGE_PATH/MainActivity.java << JAVA_EOF
 package ${PACKAGE_NAME};
 import android.app.Activity;
@@ -152,9 +150,10 @@ public class MainActivity extends Activity {
 }
 JAVA_EOF
 
+# Manifest içindeki 'package' kısmını sildik, Gradle uyarısını çözdük
 cat > app/src/main/AndroidManifest.xml << MANIFEST_EOF
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="${PACKAGE_NAME}">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:label="${APP_NAME}" android:icon="@mipmap/ic_launcher" android:usesCleartextTraffic="true">
         <activity android:name=".MainActivity" android:exported="true">
@@ -169,18 +168,18 @@ MANIFEST_EOF
 
 echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">'"${APP_NAME}"'</string></resources>' > app/src/main/res/values/strings.xml
 
-# ── 7. BUILD SÜRECİ ──────────────────────────────────────────────────────────
-echo "🚀 Build başlatılıyor..."
+# ── 7. BUILD VE SONUÇ ────────────────────────────────────────────────────────
+echo "🏗️  Gradle Build (v9.4) Başlatılıyor..."
+# --no-daemon kullanarak her seferinde taze süreç başlatır, bellek hatalarını azaltır
 gradle clean assembleRelease --stacktrace --no-daemon
 
-# ── 8. SONUÇ VE İMZA KONTROLÜ ────────────────────────────────────────────────
-APK_RAW="app/build/outputs/apk/release/app-release-unsigned.apk"
-if [ -f "$APK_RAW" ]; then
+APK_FINAL="app/build/outputs/apk/release/app-release-unsigned.apk"
+if [ -f "$APK_FINAL" ]; then
     echo "==========================================================="
-    echo "  ✅ APK BAŞARIYLA OLUŞTURULDU"
-    echo "  📂 Konum: $APK_RAW"
+    echo "  ✅ BİN UYGULAMA İÇİN İLK APK HAZIR!"
+    echo "  📂 Konum: $APK_FINAL"
     echo "==========================================================="
 else
-    echo "❌ HATA: APK oluşturulamadı!"
+    echo "❌ HATA: APK üretilemedi!"
     exit 1
 fi
