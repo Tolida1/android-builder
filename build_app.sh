@@ -1,200 +1,223 @@
 #!/bin/bash
-# ==============================================================================
-# build_app.sh — ExoPlayer + Firebase + M3U Player
-# Gradle 8.4 + AGP 8.2.2 + GMS 4.3.15
-# ==============================================================================
 set -e
 
-echo "=========================================="
-echo "  BUILD: $APP_NAME ($PACKAGE_NAME)"
-echo "  Owner: $OWNER_ID | App: $APP_ID"
-echo "=========================================="
+echo "BUILD: $APP_NAME ($PACKAGE_NAME) | Owner: $OWNER_ID | App: $APP_ID"
 
+# SDK paths
 ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tail -1)
 export PATH="$BUILD_TOOLS_DIR:$ANDROID_SDK/platform-tools:$PATH"
 
-# Gradle 8.4
+# Gradle 7.6.4
 GRADLE_VERSION="7.6.4"
-GRADLE_HOME="/opt/gradle-${GRADLE_VERSION}"
-if [ ! -f "$GRADLE_HOME/bin/gradle" ]; then
-    wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/gradle.zip
-    sudo unzip -q /tmp/gradle.zip -d /opt/
-    rm -f /tmp/gradle.zip
+GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
+if [ ! -f "$GRADLE_BIN" ]; then
+  wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/g.zip
+  sudo unzip -q /tmp/g.zip -d /opt/
+  rm -f /tmp/g.zip
 fi
-GRADLE="$GRADLE_HOME/bin/gradle"
 
 # Workspace
-WORKSPACE="/tmp/build_${APP_ID}_$$"
-rm -rf "$WORKSPACE"; mkdir -p "$WORKSPACE"; cd "$WORKSPACE"
+WS="/tmp/build_${APP_ID}_$$"
+rm -rf "$WS" && mkdir -p "$WS" && cd "$WS"
 
-PACKAGE_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
-mkdir -p app/src/main/java/$PACKAGE_PATH
+PKG_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
+mkdir -p app/src/main/java/$PKG_PATH
 mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi}
 
-# Google Services JSON
+# google-services.json
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
-python3 - << PYEOF
+python3 -c "
 import json
-with open('app/google-services.json','r') as f: data=json.load(f)
-for c in data.get('client',[]): c['client_info']['android_client_info']['package_name']='${PACKAGE_NAME}'
-with open('app/google-services.json','w') as f: json.dump(data,f,indent=2)
-print("google-services.json updated")
-PYEOF
+with open('app/google-services.json') as f: d=json.load(f)
+for c in d.get('client',[]): c['client_info']['android_client_info']['package_name']='${PACKAGE_NAME}'
+with open('app/google-services.json','w') as f: json.dump(d,f,indent=2)
+print('google-services.json ok')
+"
 
 # Java files
-for jf in MainActivity AppFirebaseMessagingService PlayerActivity ContentAdapter M3uParser; do
-    src="$GITHUB_WORKSPACE/${jf}.java"
-    dst="app/src/main/java/$PACKAGE_PATH/${jf}.java"
-    if [ -f "$src" ]; then
-        sed "s/PACKAGE_PLACEHOLDER/${PACKAGE_NAME}/g" "$src" > "$dst"
-        # Replace other placeholders in MainActivity
-        if [ "$jf" = "MainActivity" ]; then
-            sed -i "s/OWNER_ID_PLACEHOLDER/${OWNER_ID}/g" "$dst"
-            sed -i "s/APP_ID_PLACEHOLDER/${APP_ID}/g" "$dst"
-            sed -i "s/APP_TOPIC_PLACEHOLDER/app_${APP_ID}/g" "$dst"
-            sed -i "s|CONTENT_URL_PLACEHOLDER|${CONTENT_URL:-https://example.com}|g" "$dst"
-        fi
+for JF in MainActivity AppFirebaseMessagingService PlayerActivity ContentAdapter M3uParser; do
+  SRC="$GITHUB_WORKSPACE/${JF}.java"
+  DST="app/src/main/java/$PKG_PATH/${JF}.java"
+  if [ -f "$SRC" ]; then
+    sed "s/PACKAGE_PLACEHOLDER/${PACKAGE_NAME}/g" "$SRC" > "$DST"
+    if [ "$JF" = "MainActivity" ]; then
+      sed -i "s/OWNER_ID_PLACEHOLDER/${OWNER_ID}/g" "$DST"
+      sed -i "s/APP_ID_PLACEHOLDER/${APP_ID}/g" "$DST"
+      sed -i "s/APP_TOPIC_PLACEHOLDER/app_${APP_ID}/g" "$DST"
+      sed -i "s|CONTENT_URL_PLACEHOLDER|${CONTENT_URL:-https://example.com}|g" "$DST"
     fi
+    echo "$JF.java copied"
+  fi
 done
 
-# AndroidManifest
-cat > app/src/main/AndroidManifest.xml << MANIFEST_EOF
+# AndroidManifest.xml
+cat > app/src/main/AndroidManifest.xml << 'MEOF'
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="${APP_NAME}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
+        android:name="androidx.multidex.MultiDexApplication"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|keyboardHidden">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
         <activity
             android:name=".PlayerActivity"
             android:exported="false"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|screenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustNothing" />
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
         <service android:name=".AppFirebaseMessagingService" android:exported="false">
             <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
             </intent-filter>
         </service>
     </application>
 </manifest>
-MANIFEST_EOF
+MEOF
 
-# Resources
-cat > app/src/main/res/values/colors.xml << EOF
+# Inject app_name and intent-filters into manifest
+sed -i "s|android:name=\".MainActivity\"|android:name=\".MainActivity\"\n            android:label=\"${APP_NAME}\"|g" app/src/main/AndroidManifest.xml
+
+# Add launcher intent filter
+cat > /tmp/manifest_patch.py << 'PYEOF'
+import re, sys
+content = open('app/src/main/AndroidManifest.xml').read()
+old = 'android:configChanges="orientation|screenSize|keyboardHidden"/>'
+new = '''android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>'''
+content = content.replace(old, new, 1)
+open('app/src/main/AndroidManifest.xml','w').write(content)
+print("manifest patched")
+PYEOF
+python3 /tmp/manifest_patch.py
+
+# Colors
+cat > app/src/main/res/values/colors.xml << CEOF
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primaryColor">${PRIMARY_COLOR:-#6c63ff}</color>
-    <color name="primaryDarkColor">${PRIMARY_DARK_COLOR:-#5a52d5}</color>
-    <color name="accentColor">${ACCENT_COLOR:-#ff6584}</color>
+    <color name="colorPrimary">#6c63ff</color>
+    <color name="colorPrimaryDark">#5a52d5</color>
+    <color name="colorAccent">#ff6584</color>
 </resources>
-EOF
+CEOF
 
-cat > app/src/main/res/values/strings.xml << EOF
+# Strings
+cat > app/src/main/res/values/strings.xml << SEOF
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">${APP_NAME}</string>
     <string name="default_notification_channel_id">app_notifications</string>
 </resources>
-EOF
+SEOF
 
-cat > app/src/main/res/values/styles.xml << 'EOF'
+# Styles
+cat > app/src/main/res/values/styles.xml << 'STEOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:colorPrimary">@color/primaryColor</item>
-        <item name="android:colorPrimaryDark">@color/primaryDarkColor</item>
-        <item name="android:colorAccent">@color/accentColor</item>
-        <item name="android:statusBarColor">@color/primaryDarkColor</item>
+        <item name="android:colorPrimary">@color/colorPrimary</item>
+        <item name="android:colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="android:colorAccent">@color/colorAccent</item>
         <item name="android:windowBackground">@android:color/black</item>
     </style>
 </resources>
-EOF
+STEOF
 
 # Icons
 sudo apt-get install -y -qq imagemagick 2>/dev/null
-generate_icon() {
-    local sz=$1 dpi=$2
-    if [ -f /tmp/icon_source.png ]; then
-        convert /tmp/icon_source.png -resize ${sz}x${sz} app/src/main/res/mipmap-$dpi/ic_launcher.png
-    else
-        convert -size ${sz}x${sz} xc:"${PRIMARY_COLOR:-#6c63ff}" -fill white -gravity center \
-            -pointsize $((sz/3)) -annotate 0 "${APP_NAME:0:1}" app/src/main/res/mipmap-$dpi/ic_launcher.png
-    fi
-    cp app/src/main/res/mipmap-$dpi/ic_launcher.png app/src/main/res/mipmap-$dpi/ic_launcher_round.png
+gen_icon() {
+  SZ=$1 DPI=$2
+  OUT="app/src/main/res/mipmap-$DPI/ic_launcher.png"
+  if [ -f /tmp/icon_source.png ]; then
+    convert /tmp/icon_source.png -resize ${SZ}x${SZ} "$OUT"
+  else
+    convert -size ${SZ}x${SZ} xc:"#6c63ff" -fill white -gravity center \
+      -pointsize $((SZ/3)) -annotate 0 "${APP_NAME:0:1}" "$OUT"
+  fi
+  cp "$OUT" "app/src/main/res/mipmap-$DPI/ic_launcher_round.png"
 }
 [ -n "$ICON_URL" ] && wget -q "$ICON_URL" -O /tmp/icon_source.png 2>/dev/null || true
-generate_icon 72 hdpi; generate_icon 48 mdpi; generate_icon 96 xhdpi
-generate_icon 144 xxhdpi; generate_icon 192 xxxhdpi
+gen_icon 72 hdpi; gen_icon 48 mdpi; gen_icon 96 xhdpi
+gen_icon 144 xxhdpi; gen_icon 192 xxxhdpi
 
-# Gradle Properties
-cat > gradle.properties << 'EOF'
+# gradle.properties
+cat > gradle.properties << 'GPEOF'
 android.useAndroidX=true
 android.enableJetifier=false
 org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m
 android.nonTransitiveRClass=true
 kotlin.stdlib.default.dependency=false
-EOF
+GPEOF
 
-# Settings
-cat > settings.gradle << 'EOF'
+# settings.gradle
+cat > settings.gradle << 'SGEOF'
 pluginManagement {
-    repositories { google(); mavenCentral(); gradlePluginPortal() }
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories {
+        google()
+        mavenCentral()
+    }
 }
 rootProject.name = "creatorapp"
 include ':app'
-EOF
+SGEOF
 
-# Root build.gradle — AGP 7.4.2 + GMS 4.3.15 (media3 ile uyumlu en stabil kombinasyon)
-cat > build.gradle << 'EOF'
+# Root build.gradle — AGP 7.4.2
+cat > build.gradle << 'BGEOF'
 buildscript {
-    repositories { google(); mavenCentral() }
+    repositories {
+        google()
+        mavenCentral()
+    }
     dependencies {
         classpath 'com.android.tools.build:gradle:7.4.2'
         classpath 'com.google.gms:google-services:4.3.15'
     }
 }
-EOF
+BGEOF
 
 # App build.gradle
-cat > app/build.gradle << EOF
+PKG=$PACKAGE_NAME
+VC=${VERSION_CODE:-1}
+VN=${VERSION_NAME:-1.0}
+
+cat > app/build.gradle << ABEOF
 apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'
 
 android {
-    namespace '${PACKAGE_NAME}'
+    namespace '$PKG'
     compileSdkVersion 34
 
     defaultConfig {
-        applicationId '${PACKAGE_NAME}'
+        applicationId '$PKG'
         minSdkVersion 21
         targetSdkVersion 34
-        versionCode ${VERSION_CODE:-1}
-        versionName '${VERSION_NAME:-1.0}'
+        versionCode $VC
+        versionName '$VN'
         multiDexEnabled true
     }
 
@@ -204,14 +227,21 @@ android {
     }
 
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+        }
     }
 
     packagingOptions {
         resources {
-            excludes += ['META-INF/DEPENDENCIES','META-INF/LICENSE',
-                         'META-INF/NOTICE','META-INF/*.kotlin_module',
-                         'META-INF/AL2.0','META-INF/LGPL2.1']
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/NOTICE',
+                'META-INF/*.kotlin_module',
+                'META-INF/AL2.0',
+                'META-INF/LGPL2.1'
+            ]
         }
     }
 }
@@ -226,17 +256,14 @@ configurations.all {
 }
 
 dependencies {
-    // Firebase
     implementation platform('com.google.firebase:firebase-bom:32.7.4')
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
 
-    // AndroidX
     implementation 'androidx.core:core:1.9.0'
     implementation 'androidx.recyclerview:recyclerview:1.3.0'
     implementation 'androidx.multidex:multidex:2.0.1'
 
-    // ExoPlayer Media3
     implementation 'androidx.media3:media3-exoplayer:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.2.1'
@@ -245,50 +272,54 @@ dependencies {
     implementation 'androidx.media3:media3-ui:1.2.1'
     implementation 'androidx.media3:media3-datasource-okhttp:1.2.1'
 
-    // OkHttp
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-
-    // Kotlin
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
-EOF
-}
-EOF
+ABEOF
 
 # Gradle wrapper
 mkdir -p gradle/wrapper
-cat > gradle/wrapper/gradle-wrapper.properties << EOF
+cat > gradle/wrapper/gradle-wrapper.properties << GWEOF
 distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
 distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
 zipStoreBase=GRADLE_USER_HOME
 zipStorePath=wrapper/dists
-EOF
+GWEOF
 
 # Build
-echo "Gradle build başlıyor..."
-$GRADLE assembleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -30
+echo "Gradle build starting..."
+"$GRADLE_BIN" assembleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -40
 
-APK_IN="$WORKSPACE/app/build/outputs/apk/release/app-release-unsigned.apk"
-APK_OUT="/tmp/${PACKAGE_NAME}_v${VERSION_CODE:-1}.apk"
-AAB_OUT="/tmp/${PACKAGE_NAME}_v${VERSION_CODE:-1}.aab"
+APK_IN="$WS/app/build/outputs/apk/release/app-release-unsigned.apk"
+APK_OUT="/tmp/${PACKAGE_NAME}_v${VC}.apk"
+AAB_OUT="/tmp/${PACKAGE_NAME}_v${VC}.aab"
 
-[ -f "$APK_IN" ] || { echo "❌ APK bulunamadı"; exit 1; }
+if [ ! -f "$APK_IN" ]; then
+  echo "APK not found at $APK_IN"
+  ls "$WS/app/build/outputs/" 2>/dev/null || echo "No outputs dir"
+  exit 1
+fi
 
-keytool -genkey -v -keystore /tmp/ks.jks -alias release -keyalg RSA -keysize 2048 -validity 10000 \
-  -storepass android -keypass android -dname "CN=Android,OU=Android,O=Android,L=Android,S=Android,C=US" -noprompt 2>/dev/null
+# Sign
+keytool -genkey -v \
+  -keystore /tmp/ks.jks -alias release \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass android -keypass android \
+  -dname "CN=Android,OU=Android,O=Android,L=Android,S=Android,C=US" \
+  -noprompt 2>/dev/null
 
 "$BUILD_TOOLS_DIR/zipalign" -v 4 "$APK_IN" /tmp/aligned.apk
-"$BUILD_TOOLS_DIR/apksigner" sign --ks /tmp/ks.jks --ks-key-alias release \
-  --ks-pass pass:android --key-pass pass:android --out "$APK_OUT" /tmp/aligned.apk
+"$BUILD_TOOLS_DIR/apksigner" sign \
+  --ks /tmp/ks.jks --ks-key-alias release \
+  --ks-pass pass:android --key-pass pass:android \
+  --out "$APK_OUT" /tmp/aligned.apk
 
 # AAB
-$GRADLE bundleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -10
-AAB_IN="$WORKSPACE/app/build/outputs/bundle/release/app-release.aab"
-[ -f "$AAB_IN" ] && cp "$AAB_IN" "$AAB_OUT"
+"$GRADLE_BIN" bundleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -10
+AAB_IN="$WS/app/build/outputs/bundle/release/app-release.aab"
+[ -f "$AAB_IN" ] && cp "$AAB_IN" "$AAB_OUT" || echo "AAB not found, skipping"
 
 echo "APK_FILE=$APK_OUT" >> $GITHUB_ENV
 echo "AAB_FILE=$AAB_OUT" >> $GITHUB_ENV
-echo "=========================================="
-echo "✅ BUILD TAMAMLANDI — APK: $(du -sh $APK_OUT | cut -f1)"
-echo "=========================================="
+echo "BUILD DONE - APK: $(du -sh $APK_OUT 2>/dev/null | cut -f1)"
