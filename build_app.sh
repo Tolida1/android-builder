@@ -227,14 +227,20 @@ public class MainActivity extends Activity {
                 }
 
                 // Reklam config'ini oku
-                final Map<String,Object> adsConfig = snap.contains("config.ads") ?
-                    (Map<String,Object>) snap.get("config.ads") : null;
+                Object adsRaw = snap.get("config.ads");
+                @SuppressWarnings("unchecked")
+                final Map<String,Object> adsConfig = (adsRaw instanceof Map) ?
+                    (Map<String,Object>) adsRaw : null;
 
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
-                        // Reklamları ilk seferinde init et
-                        if (adsConfig != null && adManager != null && bannerContainer != null) {
-                            adManager.init(adsConfig, bannerContainer);
+                        // Reklamları bir kez init et (initialized flag AdManager içinde)
+                        try {
+                            if (adsConfig != null && adManager != null && bannerContainer != null) {
+                                adManager.init(adsConfig, bannerContainer);
+                            }
+                        } catch (Throwable t) {
+                            android.util.Log.e("MainActivity", "Ad init error: " + t.getMessage());
                         }
                         buildNav();
                         if (activeTab < 0 && !navTabs.isEmpty()) {
@@ -300,9 +306,13 @@ public class MainActivity extends Activity {
 
         Map<String,Object> tab  = navTabs.get(idx);
         // Geçiş reklamı tetikle
-        if (adManager != null) {
-            String tabTitle = str(tab, "title", "");
-            adManager.onTabChange(tabTitle);
+        try {
+            if (adManager != null) {
+                String tabTitle = str(tab, "title", "");
+                adManager.onTabChange(tabTitle);
+            }
+        } catch (Throwable t) {
+            android.util.Log.e("MainActivity", "Ad tab error: " + t.getMessage());
         }
         String type    = str(tab, "type",    "web");
         String display = str(tab, "display", "list");
@@ -1292,316 +1302,232 @@ cat > "app/src/main/java/$PKG_PATH/AdManager.java" << 'JAVA_ADMANAGER_EOF'
 package PACKAGE_PLACEHOLDER;
 
 import android.app.Activity;
-import android.content.Context;
 import android.util.Log;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
-
-// AdMob
-import com.google.android.gms.ads.AdListener;
-import com.google.android.gms.ads.AdRequest;
-import com.google.android.gms.ads.AdSize;
-import com.google.android.gms.ads.AdView;
-import com.google.android.gms.ads.FullScreenContentCallback;
-import com.google.android.gms.ads.LoadAdError;
-import com.google.android.gms.ads.MobileAds;
-import com.google.android.gms.ads.interstitial.InterstitialAd;
-import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
-import com.google.android.gms.ads.rewarded.RewardedAd;
-import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback;
-
-// Unity Ads
-import com.unity3d.ads.IUnityAdsInitializationListener;
-import com.unity3d.ads.IUnityAdsLoadListener;
-import com.unity3d.ads.IUnityAdsShowListener;
-import com.unity3d.ads.UnityAds;
-import com.unity3d.ads.UnityAdsShowOptions;
-
-// AppLovin
-import com.applovin.sdk.AppLovinSdk;
-import com.applovin.sdk.AppLovinSdkConfiguration;
-import com.applovin.mediation.MaxAd;
-import com.applovin.mediation.MaxAdListener;
-import com.applovin.mediation.MaxError;
-import com.applovin.mediation.ads.MaxInterstitialAd;
-import com.applovin.mediation.ads.MaxRewardedAd;
-import com.applovin.mediation.MaxRewardedAdListener;
-import com.applovin.mediation.MaxReward;
-
+import java.util.List;
 import java.util.Map;
 
 public class AdManager {
 
     private static final String TAG = "AdManager";
 
-    // AdMob
-    private AdView       admobBanner;
-    private InterstitialAd admobInter;
-    private RewardedAd   admobRewarded;
-    private int          admobInterCount = 0;
-    private int          admobInterFreq  = 0;
-
-    // Unity
-    private boolean      unityReady   = false;
-    private int          unityInterCount = 0;
-    private int          unityInterFreq  = 0;
-
-    // AppLovin
-    private MaxInterstitialAd aplInter;
-    private MaxRewardedAd  aplRewarded;
-    private int            aplInterCount = 0;
-    private int            aplInterFreq  = 0;
-
     private final Activity activity;
-    private Map<String,Object> config;
-    private FrameLayout  bannerContainer;
+    private Map<String,Object> adsCfg;
+    private FrameLayout bannerContainer;
+    private boolean initialized = false;
+
+    // Counters
+    private int admobInterCount = 0;
+    private int unityInterCount = 0;
+    private int aplInterCount   = 0;
+
+    // AdMob refs (Object to avoid crash if SDK missing)
+    private Object admobBannerView;
+    private Object admobInterAd;
 
     public AdManager(Activity activity) {
         this.activity = activity;
     }
 
-    // ── Init ──────────────────────────────────────────────────
-    @SuppressWarnings("unchecked")
-    public void init(Map<String,Object> adsConfig, FrameLayout bannerContainer) {
-        if (adsConfig == null) return;
-        this.config = adsConfig;
-        this.bannerContainer = bannerContainer;
+    public void init(Map<String,Object> cfg, FrameLayout container) {
+        if (cfg == null || initialized) return;
+        this.adsCfg = cfg;
+        this.bannerContainer = container;
+        initialized = true;
 
-        boolean admobOn  = Boolean.TRUE.equals(adsConfig.get("admobEnabled"));
-        boolean unityOn  = Boolean.TRUE.equals(adsConfig.get("unityEnabled"));
-        boolean aplOn    = Boolean.TRUE.equals(adsConfig.get("aplEnabled"));
+        boolean admobOn  = Boolean.TRUE.equals(cfg.get("admobEnabled"));
+        boolean unityOn  = Boolean.TRUE.equals(cfg.get("unityEnabled"));
+        boolean aplOn    = Boolean.TRUE.equals(cfg.get("aplEnabled"));
 
-        if (admobOn)  initAdMob(adsConfig);
-        if (unityOn)  initUnity(adsConfig);
-        if (aplOn)    initAppLovin(adsConfig);
+        if (admobOn)  initAdMob();
+        if (unityOn)  initUnity();
+        if (aplOn)    initAppLovin();
     }
 
     // ── AdMob ─────────────────────────────────────────────────
-    private void initAdMob(Map<String,Object> cfg) {
-        String appId    = str(cfg, "admobApp");
-        String bannerId = str(cfg, "admobBanner");
-        String interId  = str(cfg, "admobInter");
-        String rewId    = str(cfg, "admobReward");
-        String freq     = str(cfg, "admobIntFreq");
-        String banPos   = str(cfg, "admobBanPos");
+    private void initAdMob() {
+        try {
+            String appId  = str("admobApp");
+            String banId  = str("admobBanner");
+            String intId  = str("admobInter");
+            String banPos = str("admobBanPos");
 
-        admobInterFreq = parseFreq(freq);
+            com.google.android.gms.ads.MobileAds.initialize(activity,
+                status -> Log.d(TAG, "AdMob init ok"));
 
-        try { MobileAds.initialize(activity, status -> Log.d(TAG,"AdMob init ok")); }
-        catch (Exception e) { Log.e(TAG,"AdMob init err: "+e.getMessage()); return; }
+            // Banner
+            if (!banId.isEmpty() && bannerContainer != null) {
+                com.google.android.gms.ads.AdView av =
+                    new com.google.android.gms.ads.AdView(activity);
+                av.setAdUnitId(banId);
+                av.setAdSize(com.google.android.gms.ads.AdSize.BANNER);
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.gravity = "top".equals(banPos) ? Gravity.TOP : Gravity.BOTTOM;
+                bannerContainer.addView(av, lp);
+                av.loadAd(new com.google.android.gms.ads.AdRequest.Builder().build());
+                admobBannerView = av;
+            }
 
-        // Banner
-        if (!bannerId.isEmpty() && bannerContainer != null) {
-            admobBanner = new AdView(activity);
-            admobBanner.setAdUnitId(bannerId);
-            admobBanner.setAdSize(AdSize.BANNER);
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.gravity = "top".equals(banPos) ? Gravity.TOP : Gravity.BOTTOM;
-            bannerContainer.addView(admobBanner, lp);
-            admobBanner.loadAd(new AdRequest.Builder().build());
-        }
+            // Interstitial preload
+            if (!intId.isEmpty()) loadAdMobInter(intId);
 
-        // Interstitial preload
-        if (!interId.isEmpty()) loadAdMobInter(interId);
-
-        // Rewarded preload
-        if (!rewId.isEmpty()) {
-            final String id = rewId;
-            RewardedAd.load(activity, id, new AdRequest.Builder().build(),
-                new RewardedAdLoadCallback() {
-                    @Override public void onAdLoaded(RewardedAd ad) { admobRewarded = ad; }
-                    @Override public void onAdFailedToLoad(LoadAdError e) { Log.d(TAG,"Rew load fail"); }
-                });
+        } catch (Throwable t) {
+            Log.e(TAG, "AdMob init error: " + t.getMessage());
         }
     }
 
-    private void loadAdMobInter(final String id) {
-        InterstitialAd.load(activity, id, new AdRequest.Builder().build(),
-            new InterstitialAdLoadCallback() {
-                @Override public void onAdLoaded(InterstitialAd ad) {
-                    admobInter = ad;
-                }
-                @Override public void onAdFailedToLoad(LoadAdError e) {
-                    admobInter = null;
-                    Log.d(TAG, "Inter load fail: " + e.getMessage());
-                }
-            });
+    private void loadAdMobInter(String id) {
+        try {
+            com.google.android.gms.ads.interstitial.InterstitialAd.load(
+                activity, id,
+                new com.google.android.gms.ads.AdRequest.Builder().build(),
+                new com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback() {
+                    @Override public void onAdLoaded(
+                            com.google.android.gms.ads.interstitial.InterstitialAd ad) {
+                        admobInterAd = ad;
+                        Log.d(TAG, "AdMob inter loaded");
+                    }
+                    @Override public void onAdFailedToLoad(
+                            com.google.android.gms.ads.LoadAdError e) {
+                        admobInterAd = null;
+                    }
+                });
+        } catch (Throwable t) {
+            Log.e(TAG, "AdMob inter load error: " + t.getMessage());
+        }
     }
 
     // ── Unity Ads ─────────────────────────────────────────────
-    private void initUnity(Map<String,Object> cfg) {
-        String gameId  = str(cfg, "unityGame");
-        String freq    = str(cfg, "unityIntFreq");
-        unityInterFreq = parseFreq(freq);
-        if (gameId.isEmpty()) return;
-
-        final String bannerId = str(cfg, "unityBanner");
-        final String interId  = str(cfg, "unityInter");
-        final String banPos   = str(cfg, "unityBanPos");
-
-        UnityAds.initialize(activity, gameId, false, new IUnityAdsInitializationListener() {
-            @Override public void onInitializationComplete() {
-                unityReady = true;
-                Log.d(TAG, "Unity init ok");
-                // Load banner
-                if (!bannerId.isEmpty() && bannerContainer != null) {
-                    activity.runOnUiThread(new Runnable() {
-                        @Override public void run() { showUnityBanner(bannerId, banPos); }
-                    });
-                }
-                // Preload inter
-                if (!interId.isEmpty()) {
-                    UnityAds.load(interId, new IUnityAdsLoadListener() {
-                        @Override public void onUnityAdsAdLoaded(String id) { Log.d(TAG,"Unity inter loaded"); }
-                        @Override public void onUnityAdsFailedToLoad(String id, UnityAds.UnityAdsLoadError err, String msg) {}
-                    });
-                }
-            }
-            @Override public void onInitializationFailed(UnityAds.UnityAdsInitializationError err, String msg) {
-                Log.e(TAG, "Unity init fail: " + msg);
-            }
-        });
-    }
-
-    private void showUnityBanner(String placementId, String position) {
-        // Unity Banner via BannerView
+    private void initUnity() {
         try {
-            com.unity3d.ads.IUnityAdsLoadListener ll = new com.unity3d.ads.IUnityAdsLoadListener() {
-                @Override public void onUnityAdsAdLoaded(String id) { Log.d(TAG,"Unity banner loaded"); }
-                @Override public void onUnityAdsFailedToLoad(String id, UnityAds.UnityAdsLoadError e, String m) {}
-            };
-            UnityAds.load(placementId, ll);
-        } catch (Exception e) { Log.e(TAG, "Unity banner: " + e.getMessage()); }
-    }
+            String gameId = str("unityGame");
+            if (gameId.isEmpty()) return;
 
-    // ── AppLovin MAX ──────────────────────────────────────────
-    private void initAppLovin(Map<String,Object> cfg) {
-        String sdkKey   = str(cfg, "aplKey");
-        String bannerId = str(cfg, "aplBanner");
-        String interId  = str(cfg, "aplInter");
-        String rewId    = str(cfg, "aplReward");
-        String banPos   = str(cfg, "aplBanPos");
-        String freq     = str(cfg, "aplIntFreq");
-        aplInterFreq = parseFreq(freq);
-
-        if (sdkKey.isEmpty()) return;
-
-        AppLovinSdk sdk = AppLovinSdk.getInstance(sdkKey, new com.applovin.sdk.AppLovinSdkSettings(activity), activity);
-        sdk.initializeSdk(new AppLovinSdk.SdkInitializationListener() {
-            @Override public void onSdkInitialized(AppLovinSdkConfiguration c) {
-                Log.d(TAG,"AppLovin init ok");
-                activity.runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        // AppLovin banner (MAX SDK ayrı entegrasyon gerektirir, şimdilik atla)
-                        // Interstitial
-                        if (!interId.isEmpty()) {
-                            aplInter = new MaxInterstitialAd(interId, activity);
-                            aplInter.setListener(new MaxAdListener() {
-                                @Override public void onAdLoaded(MaxAd ad) {}
-                                @Override public void onAdDisplayed(MaxAd ad) {}
-                                @Override public void onAdHidden(MaxAd ad) { aplInter.loadAd(); }
-                                @Override public void onAdClicked(MaxAd ad) {}
-                                @Override public void onAdLoadFailed(String id, MaxError e) {}
-                                @Override public void onAdDisplayFailed(MaxAd ad, MaxError e) {}
-                            });
-                            aplInter.loadAd();
-                        }
-                        // Rewarded
-                        if (!rewId.isEmpty()) {
-                            aplRewarded = MaxRewardedAd.getInstance(rewId, activity);
-                            aplRewarded.setListener(new MaxRewardedAdListener() {
-                                @Override public void onAdLoaded(MaxAd ad) {}
-                                @Override public void onAdDisplayed(MaxAd ad) {}
-                                @Override public void onAdHidden(MaxAd ad) { aplRewarded.loadAd(); }
-                                @Override public void onAdClicked(MaxAd ad) {}
-                                @Override public void onAdLoadFailed(String id, MaxError e) {}
-                                @Override public void onAdDisplayFailed(MaxAd ad, MaxError e) {}
-                                @Override public void onUserRewarded(MaxAd ad, MaxReward r) {}
-                                @Override public void onRewardedVideoStarted(MaxAd ad) {}
-                                @Override public void onRewardedVideoCompleted(MaxAd ad) {}
-                            });
-                            aplRewarded.loadAd();
+            final String intId  = str("unityInter");
+            com.unity3d.ads.UnityAds.initialize(activity, gameId, false,
+                new com.unity3d.ads.IUnityAdsInitializationListener() {
+                    @Override public void onInitializationComplete() {
+                        Log.d(TAG, "Unity init ok");
+                        if (!intId.isEmpty()) {
+                            com.unity3d.ads.UnityAds.load(intId,
+                                new com.unity3d.ads.IUnityAdsLoadListener() {
+                                    @Override public void onUnityAdsAdLoaded(String i) {}
+                                    @Override public void onUnityAdsFailedToLoad(String i,
+                                        com.unity3d.ads.UnityAds.UnityAdsLoadError e, String m) {}
+                                });
                         }
                     }
+                    @Override public void onInitializationFailed(
+                            com.unity3d.ads.UnityAds.UnityAdsInitializationError e, String m) {
+                        Log.e(TAG, "Unity init fail: " + m);
+                    }
                 });
-            }
-        });
+        } catch (Throwable t) {
+            Log.e(TAG, "Unity init error: " + t.getMessage());
+        }
     }
 
-    // ── Show interstitial (tab değişiminde çağır) ─────────────
-    public void onTabChange(String tabTitle) {
-        if (config == null) return;
-        // Excluded sections kontrolü
+    // ── AppLovin ──────────────────────────────────────────────
+    private void initAppLovin() {
         try {
-            Object excl = config.get("excludedSections");
-            if (excl instanceof java.util.List) {
-                java.util.List<?> ex = (java.util.List<?>) excl;
-                if (ex.contains(tabTitle)) return;
-            }
-        } catch (Exception ignored) {}
+            String sdkKey = str("aplKey");
+            if (sdkKey.isEmpty()) return;
+            final String intId = str("aplInter");
 
-        // AdMob inter
-        if (admobInterFreq > 0 && admobInter != null) {
-            admobInterCount++;
-            if (admobInterCount % admobInterFreq == 0) {
-                admobInter.show(activity);
-                String interId = str(config, "admobInter");
-                admobInter = null;
-                if (!interId.isEmpty()) loadAdMobInter(interId);
-                return;
-            }
-        }
-
-        // Unity inter
-        String unityInterId = str(config, "unityInter");
-        if (unityInterFreq > 0 && unityReady && !unityInterId.isEmpty()) {
-            unityInterCount++;
-            if (unityInterCount % unityInterFreq == 0) {
-                UnityAds.show(activity, unityInterId, new UnityAdsShowOptions(),
-                    new IUnityAdsShowListener() {
-                        @Override public void onUnityAdsShowFailure(String id, UnityAds.UnityAdsShowError e, String m) {}
-                        @Override public void onUnityAdsShowStart(String id) {}
-                        @Override public void onUnityAdsShowClick(String id) {}
-                        @Override public void onUnityAdsShowComplete(String id, UnityAds.UnityAdsShowCompletionState s) {
-                            UnityAds.load(id, new IUnityAdsLoadListener() {
-                                @Override public void onUnityAdsAdLoaded(String i) {}
-                                @Override public void onUnityAdsFailedToLoad(String i, UnityAds.UnityAdsLoadError er, String ms) {}
-                            });
+            com.applovin.sdk.AppLovinSdk sdk = com.applovin.sdk.AppLovinSdk.getInstance(
+                sdkKey,
+                new com.applovin.sdk.AppLovinSdkSettings(activity),
+                activity);
+            sdk.initializeSdk(cfg -> {
+                Log.d(TAG, "AppLovin init ok");
+                if (!intId.isEmpty()) {
+                    activity.runOnUiThread(() -> {
+                        try {
+                            com.applovin.mediation.ads.MaxInterstitialAd inter =
+                                new com.applovin.mediation.ads.MaxInterstitialAd(intId, activity);
+                            inter.loadAd();
+                        } catch (Throwable t) {
+                            Log.e(TAG, "AppLovin inter error: " + t.getMessage());
                         }
                     });
-                return;
-            }
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "AppLovin init error: " + t.getMessage());
         }
+    }
 
-        // AppLovin inter
-        if (aplInterFreq > 0 && aplInter != null && aplInter.isReady()) {
-            aplInterCount++;
-            if (aplInterCount % aplInterFreq == 0) {
-                aplInter.showAd();
-                return;
+    // ── Tab change — geçiş reklamı ────────────────────────────
+    public void onTabChange(String tabTitle) {
+        if (adsCfg == null) return;
+        try {
+            // Excluded sections kontrolü
+            Object excl = adsCfg.get("excludedSections");
+            if (excl instanceof List) {
+                if (((List<?>) excl).contains(tabTitle)) return;
             }
+
+            // AdMob inter
+            int admobFreq = parseInt(str("admobIntFreq"));
+            if (admobFreq > 0 && admobInterAd != null) {
+                admobInterCount++;
+                if (admobInterCount % admobFreq == 0) {
+                    try {
+                        ((com.google.android.gms.ads.interstitial.InterstitialAd)admobInterAd)
+                            .show(activity);
+                        admobInterAd = null;
+                        String intId = str("admobInter");
+                        if (!intId.isEmpty()) loadAdMobInter(intId);
+                        return;
+                    } catch (Throwable t) { Log.e(TAG, "AdMob show: " + t.getMessage()); }
+                }
+            }
+
+            // Unity inter
+            int unityFreq = parseInt(str("unityIntFreq"));
+            String unityId = str("unityInter");
+            if (unityFreq > 0 && !unityId.isEmpty()) {
+                unityInterCount++;
+                if (unityInterCount % unityFreq == 0) {
+                    try {
+                        com.unity3d.ads.UnityAds.show(activity, unityId,
+                            new com.unity3d.ads.UnityAdsShowOptions(),
+                            new com.unity3d.ads.IUnityAdsShowListener() {
+                                @Override public void onUnityAdsShowFailure(String i,
+                                    com.unity3d.ads.UnityAds.UnityAdsShowError e, String m) {}
+                                @Override public void onUnityAdsShowStart(String i) {}
+                                @Override public void onUnityAdsShowClick(String i) {}
+                                @Override public void onUnityAdsShowComplete(String i,
+                                    com.unity3d.ads.UnityAds.UnityAdsShowCompletionState s) {}
+                            });
+                        return;
+                    } catch (Throwable t) { Log.e(TAG, "Unity show: " + t.getMessage()); }
+                }
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "onTabChange error: " + t.getMessage());
         }
     }
 
     // ── Helpers ───────────────────────────────────────────────
-    private int parseFreq(String s) {
-        try { int v = Integer.parseInt(s); return v > 0 ? v : 0; }
-        catch (Exception e) { return 0; }
+    private String str(String key) {
+        if (adsCfg == null) return "";
+        Object v = adsCfg.get(key);
+        return (v instanceof String) ? (String) v : "";
     }
-    private static String str(Map<String,Object> m, String k) {
-        Object v = m.get(k); return (v instanceof String) ? (String)v : "";
-    }
-    private int dpToPx(int dp) {
-        return Math.round(dp * activity.getResources().getDisplayMetrics().density);
+    private int parseInt(String s) {
+        try { return Integer.parseInt(s.trim()); } catch (Exception e) { return 0; }
     }
 
     public void onDestroy() {
-        try { if (admobBanner  != null) admobBanner.destroy(); }  catch (Exception ignored) {}
-        // aplBanner destroy (disabled)
+        try {
+            if (admobBannerView instanceof com.google.android.gms.ads.AdView)
+                ((com.google.android.gms.ads.AdView) admobBannerView).destroy();
+        } catch (Throwable ignored) {}
     }
 }
 
