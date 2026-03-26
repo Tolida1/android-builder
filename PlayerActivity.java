@@ -6,59 +6,73 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
-import android.view.*;
-import android.widget.*;
-import androidx.media3.common.*;
-import androidx.media3.datasource.*;
+import android.view.GestureDetector;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
-import androidx.media3.exoplayer.*;
+import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.dash.DashMediaSource;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.exoplayer.rtsp.RtspMediaSource;
 import androidx.media3.exoplayer.smoothstreaming.SsMediaSource;
-import androidx.media3.exoplayer.source.*;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.ProgressiveMediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
-import okhttp3.*;
+import okhttp3.Interceptor;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 public class PlayerActivity extends Activity {
 
-    // ── Scale modes (cycle with button) ──────────────────────
     private static final int[] SCALE_MODES = {
-        AspectRatioFrameLayout.RESIZE_MODE_FIT,        // Fit (letterbox)
-        AspectRatioFrameLayout.RESIZE_MODE_FILL,       // Fill (crop)
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,// Fixed width
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM,       // Zoom
+        AspectRatioFrameLayout.RESIZE_MODE_FILL,
+        AspectRatioFrameLayout.RESIZE_MODE_FIT,
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
     };
-    private static final String[] SCALE_LABELS = {"FIT","FILL","WIDTH","ZOOM"};
-    private int scaleModeIdx = 1; // default FILL
+    private static final String[] SCALE_LABELS = {"FILL","FIT","ZOOM","WIDTH"};
+    private int scaleModeIdx = 0;
 
-    private ExoPlayer    player;
-    private PlayerView   playerView;
-    private FrameLayout  rootLayout;
-    private View         controlsOverlay;
-    private TextView     titleTv, timeTv, scaleTv;
-    private SeekBar      seekBar;
-    private boolean      controlsVisible  = true;
-    private boolean      locked           = false;
-    private float        currentSpeed     = 1.0f;
-    private final Handler handler          = new Handler();
-    private final Runnable hideControls    = () -> { if (!locked) hideControlsAnim(); };
-
-    // Scale gesture
+    private ExoPlayer   player;
+    private PlayerView  playerView;
+    private View        controlsOverlay;
+    private TextView    titleTv, timeTv, scaleTv, playTv;
+    private SeekBar     seekBar;
+    private boolean     controlsVisible = true;
+    private boolean     locked          = false;
+    private float       currentSpeed    = 1.0f;
+    private final Handler  handler      = new Handler();
+    private final Runnable hideCtrl     = new Runnable() {
+        @Override public void run() { if (!locked) hideAnim(); }
+    };
     private ScaleGestureDetector scaleDetector;
-    private float currentScaleX = 1f;
-    private float currentScaleY = 1f;
+    private GestureDetector      tapDetector;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                             WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().setDecorFitsSystemWindows(false);
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
 
         String url     = getIntent().getStringExtra("url");
@@ -66,122 +80,112 @@ public class PlayerActivity extends Activity {
         String referer = getIntent().getStringExtra("referer");
         String origin  = getIntent().getStringExtra("origin");
 
-        buildLayout(title);
-        buildPlayer(url, referer, origin);
-        scheduleHideControls();
+        buildLayout(title != null ? title : "");
+        buildPlayer(url, referer != null ? referer : "", origin != null ? origin : "");
+        scheduleHide();
     }
 
-    // ── Layout ────────────────────────────────────────────────
     private void buildLayout(String title) {
-        rootLayout = new FrameLayout(this);
-        rootLayout.setBackgroundColor(Color.BLACK);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
 
-        // PlayerView
         playerView = new PlayerView(this);
         playerView.setResizeMode(SCALE_MODES[scaleModeIdx]);
-        playerView.setUseController(false); // custom controls
+        playerView.setUseController(false);
         playerView.setKeepScreenOn(true);
+        root.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
 
-        FrameLayout.LayoutParams fill = new FrameLayout.LayoutParams(-1,-1);
-        rootLayout.addView(playerView, fill);
-
-        // Gesture overlay (tap + pinch zoom)
-        View gestureView = new View(this);
-        gestureView.setLayoutParams(fill);
-
-        scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            @Override public boolean onScale(ScaleGestureDetector d) {
-                float factor = d.getScaleFactor();
-                currentScaleX = Math.max(0.5f, Math.min(currentScaleX * factor, 4f));
-                currentScaleY = currentScaleX;
-                playerView.setScaleX(currentScaleX);
-                playerView.setScaleY(currentScaleY);
-                return true;
-            }
-        });
-
-        GestureDetector tapDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override public boolean onSingleTapUp(MotionEvent e) {
-                toggleControls(); return true;
-            }
-            @Override public boolean onDoubleTap(MotionEvent e) {
-                // Double tap: reset zoom
-                currentScaleX = 1f; currentScaleY = 1f;
-                playerView.setScaleX(1f); playerView.setScaleY(1f);
-                return true;
-            }
-            @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
-                if (Math.abs(vy) > Math.abs(vx)) {
-                    // Swipe up/down: brightness or volume (simplified)
+        // Gesture layer
+        View gl = new View(this);
+        scaleDetector = new ScaleGestureDetector(this,
+            new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                @Override public boolean onScale(ScaleGestureDetector d) {
+                    float f = d.getScaleFactor();
+                    float sx = Math.max(0.5f, Math.min(playerView.getScaleX() * f, 4f));
+                    playerView.setScaleX(sx);
+                    playerView.setScaleY(sx);
                     return true;
                 }
-                return false;
+            });
+        tapDetector = new GestureDetector(this,
+            new GestureDetector.SimpleOnGestureListener() {
+                @Override public boolean onSingleTapUp(MotionEvent e) {
+                    toggleCtrl(); return true;
+                }
+                @Override public boolean onDoubleTap(MotionEvent e) {
+                    playerView.setScaleX(1f); playerView.setScaleY(1f); return true;
+                }
+            });
+        gl.setOnTouchListener(new View.OnTouchListener() {
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                scaleDetector.onTouchEvent(e);
+                tapDetector.onTouchEvent(e);
+                return true;
             }
         });
-
-        gestureView.setOnTouchListener((v, e) -> {
-            scaleDetector.onTouchEvent(e);
-            tapDetector.onTouchEvent(e);
-            return true;
-        });
-        rootLayout.addView(gestureView, fill);
+        root.addView(gl, new FrameLayout.LayoutParams(-1, -1));
 
         // Controls overlay
-        controlsOverlay = buildControlsOverlay(title);
-        rootLayout.addView(controlsOverlay, fill);
+        controlsOverlay = buildControls(root, title);
+        setContentView(root);
 
-        setContentView(rootLayout);
+        // Seek update
+        handler.post(new Runnable() {
+            @Override public void run() {
+                if (player != null && player.getDuration() > 0) {
+                    long pos = player.getCurrentPosition();
+                    long dur = player.getDuration();
+                    seekBar.setMax((int)(dur / 1000));
+                    seekBar.setProgress((int)(pos / 1000));
+                    timeTv.setText(fmt(pos) + " / " + fmt(dur));
+                }
+                handler.postDelayed(this, 500);
+            }
+        });
     }
 
-    private View buildControlsOverlay(String title) {
+    private View buildControls(FrameLayout root, String title) {
         FrameLayout overlay = new FrameLayout(this);
 
         // Top bar
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setBackgroundColor(Color.parseColor("#AA000000"));
-        topBar.setPadding(dp(12), dp(8), dp(12), dp(8));
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(-1,-2);
-        topParams.gravity = Gravity.TOP;
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setBackgroundColor(Color.parseColor("#BB000000"));
+        top.setPadding(dp(12), dp(10), dp(12), dp(10));
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-1, -2);
+        tp.gravity = Gravity.TOP;
 
-        // Use TextView styled as button
-        TextView backBtn = new TextView(this);
-        backBtn.setText("←");
-        backBtn.setTextSize(22);
-        backBtn.setTextColor(Color.WHITE);
-        backBtn.setPadding(0,0,dp(16),0);
-        backBtn.setOnClickListener(v -> finish());
+        TextView back = new TextView(this);
+        back.setText("←");
+        back.setTextSize(22); back.setTextColor(Color.WHITE);
+        back.setPadding(0, 0, dp(14), 0);
+        back.setOnClickListener(v -> finish());
 
         titleTv = new TextView(this);
-        titleTv.setText(title != null ? title : "");
-        titleTv.setTextSize(15);
-        titleTv.setTextColor(Color.WHITE);
+        titleTv.setText(title);
+        titleTv.setTextSize(14); titleTv.setTextColor(Color.WHITE);
         titleTv.setMaxLines(1);
         titleTv.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        LinearLayout.LayoutParams titleLP = new LinearLayout.LayoutParams(0,-2,1f);
-        titleTv.setLayoutParams(titleLP);
+        titleTv.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
 
         scaleTv = new TextView(this);
         scaleTv.setText(SCALE_LABELS[scaleModeIdx]);
-        scaleTv.setTextSize(12);
-        scaleTv.setTextColor(Color.parseColor("#aaaaff"));
-        scaleTv.setPadding(dp(8),dp(4),dp(8),dp(4));
+        scaleTv.setTextSize(11); scaleTv.setTextColor(Color.parseColor("#aaaaff"));
+        scaleTv.setPadding(dp(8), dp(4), dp(8), dp(4));
         scaleTv.setBackgroundColor(Color.parseColor("#441a1a2e"));
-        scaleTv.setOnClickListener(v -> cycleScaleMode());
+        scaleTv.setOnClickListener(v -> { cycleScale(); scheduleHide(); });
 
-        topBar.addView(backBtn);
-        topBar.addView(titleTv);
-        topBar.addView(scaleTv);
-        overlay.addView(topBar, topParams);
+        top.addView(back); top.addView(titleTv); top.addView(scaleTv);
+        overlay.addView(top, tp);
 
-        // Bottom controls
-        LinearLayout bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.VERTICAL);
-        bottomBar.setBackgroundColor(Color.parseColor("#AA000000"));
-        bottomBar.setPadding(dp(12), dp(8), dp(12), dp(12));
-        FrameLayout.LayoutParams botParams = new FrameLayout.LayoutParams(-1,-2);
-        botParams.gravity = Gravity.BOTTOM;
+        // Bottom bar
+        LinearLayout bot = new LinearLayout(this);
+        bot.setOrientation(LinearLayout.VERTICAL);
+        bot.setBackgroundColor(Color.parseColor("#BB000000"));
+        bot.setPadding(dp(12), dp(8), dp(12), dp(12));
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, -2);
+        bp.gravity = Gravity.BOTTOM;
 
         // Seek row
         LinearLayout seekRow = new LinearLayout(this);
@@ -190,251 +194,187 @@ public class PlayerActivity extends Activity {
 
         timeTv = new TextView(this);
         timeTv.setText("0:00 / 0:00");
-        timeTv.setTextSize(11);
-        timeTv.setTextColor(Color.WHITE);
+        timeTv.setTextSize(11); timeTv.setTextColor(Color.WHITE);
         timeTv.setMinWidth(dp(90));
 
         seekBar = new SeekBar(this);
         seekBar.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#6c63ff")));
         seekBar.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));
-        LinearLayout.LayoutParams seekLP = new LinearLayout.LayoutParams(0,-2,1f);
-        seekBar.setLayoutParams(seekLP);
+        seekBar.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar s, int p, boolean user) {
-                if (user && player != null) player.seekTo((long)p * 1000);
+                if (user && player != null) player.seekTo((long) p * 1000);
             }
-            @Override public void onStartTrackingTouch(SeekBar s) { handler.removeCallbacks(hideControls); }
-            @Override public void onStopTrackingTouch(SeekBar s) { scheduleHideControls(); }
+            @Override public void onStartTrackingTouch(SeekBar s) { handler.removeCallbacks(hideCtrl); }
+            @Override public void onStopTrackingTouch(SeekBar s) { scheduleHide(); }
         });
-
-        seekRow.addView(timeTv);
-        seekRow.addView(seekBar);
+        seekRow.addView(timeTv); seekRow.addView(seekBar);
 
         // Button row
         LinearLayout btnRow = new LinearLayout(this);
         btnRow.setOrientation(LinearLayout.HORIZONTAL);
         btnRow.setGravity(Gravity.CENTER);
-        btnRow.setPadding(0,dp(8),0,0);
+        btnRow.setPadding(0, dp(8), 0, 0);
 
-        // Rewind 10s
-        TextView rw = makeCtrlBtn("«10");
-        rw.setOnClickListener(v -> { if(player!=null) player.seekTo(Math.max(0,player.getCurrentPosition()-10000)); });
+        // Rewind
+        TextView rw = ctrlBtn("«10");
+        rw.setOnClickListener(v -> { if(player!=null) player.seekTo(Math.max(0,player.getCurrentPosition()-10000)); scheduleHide(); });
 
         // Play/Pause
-        TextView playBtn = makeCtrlBtn("⏸");
-        playBtn.setTextSize(24);
-        playBtn.setOnClickListener(v -> {
-            if(player==null) return;
-            if(player.isPlaying()){ player.pause(); playBtn.setText("▶"); }
-            else { player.play(); playBtn.setText("⏸"); }
-            scheduleHideControls();
+        playTv = ctrlBtn("⏸");
+        playTv.setTextSize(24);
+        playTv.setOnClickListener(v -> {
+            if (player == null) return;
+            if (player.isPlaying()) { player.pause(); playTv.setText("▶"); }
+            else                    { player.play();  playTv.setText("⏸"); }
+            scheduleHide();
         });
-        // Keep reference
-        playBtn.setTag("play");
 
-        // Forward 10s
-        TextView fw = makeCtrlBtn("10»");
-        fw.setOnClickListener(v -> { if(player!=null) player.seekTo(player.getCurrentPosition()+10000); });
+        // Forward
+        TextView fw = ctrlBtn("10»");
+        fw.setOnClickListener(v -> { if(player!=null) player.seekTo(player.getCurrentPosition()+10000); scheduleHide(); });
 
         // Speed
-        TextView speedBtn = makeCtrlBtn("1x");
-        float[] speeds = {0.5f,0.75f,1.0f,1.25f,1.5f,2.0f};
-        String[] speedLabels = {"0.5x","0.75x","1x","1.25x","1.5x","2x"};
-        final int[] speedIdx = {2};
-        speedBtn.setOnClickListener(v -> {
-            speedIdx[0] = (speedIdx[0]+1) % speeds.length;
-            currentSpeed = speeds[speedIdx[0]];
-            speedBtn.setText(speedLabels[speedIdx[0]]);
-            if(player!=null) player.setPlaybackSpeed(currentSpeed);
+        final float[] speeds = {0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f};
+        final String[] spLbls = {"0.5x","0.75x","1x","1.25x","1.5x","2x"};
+        final int[] spIdx = {2};
+        TextView speedTv = ctrlBtn("1x");
+        speedTv.setOnClickListener(v -> {
+            spIdx[0] = (spIdx[0] + 1) % speeds.length;
+            currentSpeed = speeds[spIdx[0]];
+            speedTv.setText(spLbls[spIdx[0]]);
+            if (player != null) player.setPlaybackSpeed(currentSpeed);
+            scheduleHide();
         });
-
-        // Aspect / Scale
-        TextView scaleBtn = makeCtrlBtn("⊡");
-        scaleBtn.setOnClickListener(v -> cycleScaleMode());
 
         // Zoom reset
-        TextView zoomReset = makeCtrlBtn("1:1");
-        zoomReset.setOnClickListener(v -> {
-            currentScaleX=1f; currentScaleY=1f;
-            playerView.setScaleX(1f); playerView.setScaleY(1f);
-        });
+        TextView zoomReset = ctrlBtn("1:1");
+        zoomReset.setOnClickListener(v -> { playerView.setScaleX(1f); playerView.setScaleY(1f); scheduleHide(); });
 
-        // Lock (hide controls)
-        TextView lockBtn = makeCtrlBtn("🔓");
-        lockBtn.setOnClickListener(v -> {
+        // Lock
+        final TextView lockTv = ctrlBtn("🔓");
+        lockTv.setOnClickListener(v -> {
             locked = !locked;
-            lockBtn.setText(locked ? "🔒" : "🔓");
-            if(locked) hideControlsAnim();
+            lockTv.setText(locked ? "🔒" : "🔓");
+            if (locked) hideAnim();
         });
 
-        btnRow.addView(rw);
-        btnRow.addView(playBtn);
-        btnRow.addView(fw);
-        btnRow.addView(speedBtn);
-        btnRow.addView(scaleBtn);
-        btnRow.addView(zoomReset);
-        btnRow.addView(lockBtn);
+        btnRow.addView(rw); btnRow.addView(playTv); btnRow.addView(fw);
+        btnRow.addView(speedTv); btnRow.addView(scaleTv); btnRow.addView(zoomReset); btnRow.addView(lockTv);
 
-        bottomBar.addView(seekRow);
-        bottomBar.addView(btnRow);
-        overlay.addView(bottomBar, botParams);
-
-        // Update seek bar periodically
-        handler.post(new Runnable() {
-            @Override public void run() {
-                if (player != null && player.getDuration() > 0) {
-                    long pos = player.getCurrentPosition();
-                    long dur = player.getDuration();
-                    seekBar.setMax((int)(dur/1000));
-                    seekBar.setProgress((int)(pos/1000));
-                    timeTv.setText(fmtTime(pos) + " / " + fmtTime(dur));
-                }
-                handler.postDelayed(this, 500);
-            }
-        });
-
+        bot.addView(seekRow); bot.addView(btnRow);
+        overlay.addView(bot, bp);
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
         return overlay;
     }
 
-    // ── Build Player ──────────────────────────────────────────
     private void buildPlayer(String url, String referer, String origin) {
         if (url == null || url.isEmpty()) { finish(); return; }
 
-        DefaultTrackSelector trackSelector = new DefaultTrackSelector(this);
-        trackSelector.setParameters(trackSelector.buildUponParameters()
-            .setPreferredAudioLanguage("tr")
-            .build());
-
-        player = new ExoPlayer.Builder(this)
-            .setTrackSelector(trackSelector)
-            .build();
+        DefaultTrackSelector ts = new DefaultTrackSelector(this);
+        player = new ExoPlayer.Builder(this).setTrackSelector(ts).build();
         playerView.setPlayer(player);
 
-        // HTTP headers (referer + origin)
-        DataSource.Factory dsFactory = buildDataSourceFactory(referer, origin);
+        OkHttpClient.Builder cb = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS);
 
-        // Detect format and build media source
-        MediaSource mediaSource = buildMediaSource(url, dsFactory);
-        player.setMediaSource(mediaSource);
+        final String ref = referer;
+        final String ori = origin;
+        if (!ref.isEmpty() || !ori.isEmpty()) {
+            cb.addInterceptor(new Interceptor() {
+                @Override public okhttp3.Response intercept(Chain chain) throws IOException {
+                    Request.Builder rb = chain.request().newBuilder()
+                        .header("User-Agent","Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile Safari/537.36");
+                    if (!ref.isEmpty()) rb.header("Referer", ref);
+                    if (!ori.isEmpty()) rb.header("Origin",  ori);
+                    return chain.proceed(rb.build());
+                }
+            });
+        }
+
+        DataSource.Factory dsf = new OkHttpDataSource.Factory(cb.build());
+        MediaSource ms = buildSource(url, dsf);
+        player.setMediaSource(ms);
         player.prepare();
         player.setPlayWhenReady(true);
         player.setPlaybackSpeed(currentSpeed);
 
         player.addListener(new Player.Listener() {
             @Override public void onIsPlayingChanged(boolean playing) {
-                // update play button
-                View playBtn = controlsOverlay.findViewWithTag("play");
-                if (playBtn instanceof TextView) ((TextView)playBtn).setText(playing ? "⏸" : "▶");
+                if (playTv != null) playTv.setText(playing ? "⏸" : "▶");
             }
             @Override public void onPlayerError(PlaybackException error) {
-                Toast.makeText(PlayerActivity.this, "Oynatma hatası: "+error.getMessage(), Toast.LENGTH_SHORT).show();
+                Toast.makeText(PlayerActivity.this, "Hata: " + error.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
     }
 
-    private DataSource.Factory buildDataSourceFactory(String referer, String origin) {
-        OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS);
-
-        if ((referer != null && !referer.isEmpty()) || (origin != null && !origin.isEmpty())) {
-            final String ref = referer;
-            final String ori = origin;
-            clientBuilder.addInterceptor(chain -> {
-                Request.Builder reqBuilder = chain.request().newBuilder();
-                if (ref != null && !ref.isEmpty()) reqBuilder.header("Referer", ref);
-                if (ori != null && !ori.isEmpty()) reqBuilder.header("Origin", ori);
-                reqBuilder.header("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile Safari/537.36");
-                return chain.proceed(reqBuilder.build());
-            });
-        }
-
-        return new OkHttpDataSource.Factory(clientBuilder.build());
-    }
-
-    private MediaSource buildMediaSource(String url, DataSource.Factory dsFactory) {
+    private MediaSource buildSource(String url, DataSource.Factory dsf) {
         Uri uri = Uri.parse(url);
-        String lower = url.toLowerCase();
-
-        // DASH
-        if (lower.contains(".mpd") || lower.contains("dash")) {
-            return new DashMediaSource.Factory(dsFactory).createMediaSource(MediaItem.fromUri(uri));
-        }
-        // HLS
-        if (lower.contains(".m3u8") || lower.contains("m3u8")) {
-            return new HlsMediaSource.Factory(dsFactory).createMediaSource(MediaItem.fromUri(uri));
-        }
-        // RTSP
-        if (lower.startsWith("rtsp://")) {
-            return new RtspMediaSource.Factory().createMediaSource(MediaItem.fromUri(uri));
-        }
-        // SmoothStreaming
-        if (lower.contains(".ism") || lower.contains("smoothstreaming")) {
-            return new SsMediaSource.Factory(dsFactory).createMediaSource(MediaItem.fromUri(uri));
-        }
-        // Progressive (MP4, MKV, AVI, etc) + fallback HLS for .m3u
-        if (lower.endsWith(".m3u")) {
-            return new HlsMediaSource.Factory(dsFactory).createMediaSource(MediaItem.fromUri(uri));
-        }
-        // Default: progressive
-        return new ProgressiveMediaSource.Factory(dsFactory).createMediaSource(MediaItem.fromUri(uri));
+        String lo = url.toLowerCase();
+        if (lo.contains(".mpd")  || lo.contains("dash"))   return new DashMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(uri));
+        if (lo.contains(".m3u8") || lo.contains("m3u8"))   return new HlsMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(uri));
+        if (lo.startsWith("rtsp://"))                       return new RtspMediaSource.Factory().createMediaSource(MediaItem.fromUri(uri));
+        if (lo.contains(".ism")  || lo.contains("smooth"))  return new SsMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(uri));
+        if (lo.endsWith(".m3u"))                            return new HlsMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(uri));
+        return new ProgressiveMediaSource.Factory(dsf).createMediaSource(MediaItem.fromUri(uri));
     }
 
-    // ── Scale Mode ────────────────────────────────────────────
-    private void cycleScaleMode() {
+    private void cycleScale() {
         scaleModeIdx = (scaleModeIdx + 1) % SCALE_MODES.length;
         playerView.setResizeMode(SCALE_MODES[scaleModeIdx]);
         scaleTv.setText(SCALE_LABELS[scaleModeIdx]);
     }
 
-    // ── Controls visibility ───────────────────────────────────
-    private void toggleControls() {
+    private void toggleCtrl() {
         if (locked) return;
-        if (controlsVisible) hideControlsAnim();
-        else showControlsAnim();
+        if (controlsVisible) hideAnim(); else showAnim();
     }
-    private void showControlsAnim() {
+    private void showAnim() {
         controlsVisible = true;
         controlsOverlay.animate().alpha(1f).setDuration(200).start();
-        scheduleHideControls();
+        scheduleHide();
     }
-    private void hideControlsAnim() {
+    private void hideAnim() {
         controlsVisible = false;
         controlsOverlay.animate().alpha(0f).setDuration(300).start();
     }
-    private void scheduleHideControls() {
-        handler.removeCallbacks(hideControls);
-        handler.postDelayed(hideControls, 4000);
+    private void scheduleHide() {
+        handler.removeCallbacks(hideCtrl);
+        handler.postDelayed(hideCtrl, 4000);
     }
 
-    // ── Helpers ───────────────────────────────────────────────
-    private TextView makeCtrlBtn(String label) {
+    private TextView ctrlBtn(String label) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextSize(14);
-        tv.setTextColor(Color.WHITE);
-        tv.setPadding(dp(12),dp(6),dp(12),dp(6));
+        tv.setTextSize(14); tv.setTextColor(Color.WHITE);
+        tv.setPadding(dp(12), dp(6), dp(12), dp(6));
         tv.setGravity(Gravity.CENTER);
-        tv.setOnClickListener(v -> scheduleHideControls());
         return tv;
     }
-    private String fmtTime(long ms) {
-        long s=ms/1000; long m=s/60; s=s%60;
-        long h=m/60; m=m%60;
-        if(h>0) return String.format("%d:%02d:%02d",h,m,s);
-        return String.format("%d:%02d",m,s);
+
+    private String fmt(long ms) {
+        long s = ms / 1000, m = s / 60;
+        s = s % 60;
+        long h = m / 60; m = m % 60;
+        if (h > 0) return String.format("%d:%02d:%02d", h, m, s);
+        return String.format("%d:%02d", m, s);
     }
+
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
-    @Override protected void onStop()    { super.onStop(); if(player!=null) player.pause(); }
+    @Override protected void onStop() { super.onStop(); if (player != null) player.pause(); }
     @Override protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
-        if(player!=null){ player.release(); player=null; }
+        if (player != null) { player.release(); player = null; }
     }
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if(hasFocus) getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_FULLSCREEN);
+        if (hasFocus) getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  |
+            View.SYSTEM_UI_FLAG_FULLSCREEN);
     }
 }
