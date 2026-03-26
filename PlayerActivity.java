@@ -40,7 +40,6 @@ public class PlayerActivity extends Activity {
     private FrameLayout  rootLayout;
     private View         controlsOverlay;
     private TextView     titleTv, timeTv, scaleTv;
-    private ImageButton  btnPlay, btnScale, btnBack, btnSpeed, btnLock;
     private SeekBar      seekBar;
     private boolean      controlsVisible  = true;
     private boolean      locked           = false;
@@ -146,12 +145,6 @@ public class PlayerActivity extends Activity {
         FrameLayout.LayoutParams topParams = new FrameLayout.LayoutParams(-1,-2);
         topParams.gravity = Gravity.TOP;
 
-        btnBack = new ImageButton(this);
-        btnBack.setText("←");
-        btnBack.setTextSize(20);
-        btnBack.setBackgroundColor(Color.TRANSPARENT);
-        btnBack.setTextColor(Color.WHITE);
-        btnBack.setOnClickListener(v -> finish());
         // Use TextView styled as button
         TextView backBtn = new TextView(this);
         backBtn.setText("←");
@@ -228,8 +221,6 @@ public class PlayerActivity extends Activity {
         rw.setOnClickListener(v -> { if(player!=null) player.seekTo(Math.max(0,player.getCurrentPosition()-10000)); });
 
         // Play/Pause
-        btnPlay = new ImageButton(this);
-        btnPlay.setBackgroundColor(Color.TRANSPARENT);
         TextView playBtn = makeCtrlBtn("⏸");
         playBtn.setTextSize(24);
         playBtn.setOnClickListener(v -> {
