@@ -1,8 +1,11 @@
 package PACKAGE_PLACEHOLDER;
 
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.*;
 import android.widget.*;
 import androidx.annotation.NonNull;
@@ -92,24 +95,28 @@ public class ContentAdapter extends RecyclerView.Adapter<ContentAdapter.VH> {
         vh.itemView.setOnClickListener(v -> listener.onClick(item));
     }
 
+    private void loadImage(String url, ImageView imageView) {
+        if (url == null || url.isEmpty()) return;
+        new Thread(() -> {
+            try {
+                java.net.URL u = new java.net.URL(url);
+                android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeStream(u.openStream());
+                if (bmp != null && imageView != null) {
+                    new Handler(Looper.getMainLooper()).post(() -> imageView.setImageBitmap(bmp));
+                }
+            } catch (Exception ignored) {}
+        }).start();
+    }
+
     private void bindList(VH vh, String name, String logo, String group) {
         if (vh.title != null) vh.title.setText(name);
         if (vh.subtitle != null) vh.subtitle.setText(group);
         if (vh.logo != null) {
             if (logo != null && !logo.isEmpty()) {
-                // Load logo with simple AsyncTask
-                new Thread(() -> {
-                    try {
-                        java.net.URL url = new java.net.URL(logo);
-                        android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeStream(url.openStream());
-                        if(bmp!=null && vh.logo!=null)
-                            ((Activity)ctx).runOnUiThread(()-> vh.logo.setImageBitmap(bmp));
-                    } catch(Exception ignored){}
-                }).start();
+                loadImage(logo, vh.logo);
             } else {
                 vh.logo.setBackgroundColor(Color.parseColor("#1a1a2e"));
-                // First letter
-                if (vh.logoLetter != null) vh.logoLetter.setText(name.isEmpty()?"?":(name.substring(0,1).toUpperCase()));
+                if (vh.logoLetter != null) vh.logoLetter.setText(name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase());
             }
         }
     }
@@ -117,16 +124,9 @@ public class ContentAdapter extends RecyclerView.Adapter<ContentAdapter.VH> {
     private void bindGrid(VH vh, String name, String logo) {
         if (vh.title != null) vh.title.setText(name);
         if (vh.logo != null && logo != null && !logo.isEmpty()) {
-            new Thread(() -> {
-                try {
-                    java.net.URL url = new java.net.URL(logo);
-                    android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeStream(url.openStream());
-                    if(bmp!=null && vh.logo!=null)
-                        ((Activity)ctx).runOnUiThread(()-> vh.logo.setImageBitmap(bmp));
-                } catch(Exception ignored){}
-            }).start();
+            loadImage(logo, vh.logo);
         } else if (vh.logoLetter != null) {
-            vh.logoLetter.setText(name.isEmpty()?"?":(name.substring(0,1).toUpperCase()));
+            vh.logoLetter.setText(name.isEmpty() ? "?" : name.substring(0, 1).toUpperCase());
         }
     }
 
