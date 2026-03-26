@@ -1806,8 +1806,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://unityads.unity3d.com/android' }
-        maven { url 'https://artifacts.applovin.com/android' }
     }
 }
 rootProject.name = "app"
@@ -1897,7 +1895,7 @@ dependencies {
     implementation 'com.unity3d.ads:unity-ads:4.9.2'
 
     // AppLovin MAX
-    implementation 'com.applovin.mediation:applovin-sdk:12.4.2'
+    implementation 'com.applovin:applovin-sdk:12.4.2'
 
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
