@@ -15,7 +15,7 @@ BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tai
 export PATH="$BUILD_TOOLS_DIR:$ANDROID_SDK/platform-tools:$PATH"
 
 # Gradle 8.4
-GRADLE_VERSION="8.4"
+GRADLE_VERSION="7.6.4"
 GRADLE_HOME="/opt/gradle-${GRADLE_VERSION}"
 if [ ! -f "$GRADLE_HOME/bin/gradle" ]; then
     wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/gradle.zip
@@ -169,47 +169,49 @@ rootProject.name = "creatorapp"
 include ':app'
 EOF
 
-# Root build.gradle
+# Root build.gradle — AGP 7.4.2 + GMS 4.3.15 (media3 ile uyumlu en stabil kombinasyon)
 cat > build.gradle << 'EOF'
 buildscript {
     repositories { google(); mavenCentral() }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.2'
+        classpath 'com.android.tools.build:gradle:7.4.2'
         classpath 'com.google.gms:google-services:4.3.15'
     }
 }
 EOF
 
-# App build.gradle — ExoPlayer Media3 + OkHttp
+# App build.gradle
 cat > app/build.gradle << EOF
 apply plugin: 'com.android.application'
 apply plugin: 'com.google.gms.google-services'
 
 android {
     namespace '${PACKAGE_NAME}'
-    compileSdk 34
+    compileSdkVersion 34
 
     defaultConfig {
         applicationId '${PACKAGE_NAME}'
-        minSdk 21
-        targetSdk 34
+        minSdkVersion 21
+        targetSdkVersion 34
         versionCode ${VERSION_CODE:-1}
         versionName '${VERSION_NAME:-1.0}'
+        multiDexEnabled true
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
     buildTypes {
         release { minifyEnabled false }
     }
 
-    packaging {
+    packagingOptions {
         resources {
-            excludes += ['META-INF/DEPENDENCIES','META-INF/LICENSE','META-INF/NOTICE','META-INF/*.kotlin_module']
-            pickFirsts += ['META-INF/AL2.0','META-INF/LGPL2.1']
+            excludes += ['META-INF/DEPENDENCIES','META-INF/LICENSE',
+                         'META-INF/NOTICE','META-INF/*.kotlin_module',
+                         'META-INF/AL2.0','META-INF/LGPL2.1']
         }
     }
 }
@@ -229,11 +231,12 @@ dependencies {
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
 
-    // AndroidX — appcompat YOK (resource çakışması yapıyor)
-    implementation 'androidx.core:core:1.12.0'
-    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    // AndroidX
+    implementation 'androidx.core:core:1.9.0'
+    implementation 'androidx.recyclerview:recyclerview:1.3.0'
+    implementation 'androidx.multidex:multidex:2.0.1'
 
-    // ExoPlayer Media3 1.2.1 (daha stabil)
+    // ExoPlayer Media3
     implementation 'androidx.media3:media3-exoplayer:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.2.1'
@@ -247,6 +250,8 @@ dependencies {
 
     // Kotlin
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+}
+EOF
 }
 EOF
 
