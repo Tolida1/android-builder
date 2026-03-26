@@ -1,18 +1,19 @@
 #!/bin/bash
 set -e
 
-echo "BUILD: $APP_NAME ($PACKAGE_NAME) | Owner: $OWNER_ID | App: $APP_ID"
+echo "BUILD: $APP_NAME ($PACKAGE_NAME)"
 
 # SDK paths
 ANDROID_SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
 BUILD_TOOLS_DIR=$(ls -d "$ANDROID_SDK/build-tools/"* 2>/dev/null | sort -V | tail -1)
 export PATH="$BUILD_TOOLS_DIR:$ANDROID_SDK/platform-tools:$PATH"
+echo "Build tools: $BUILD_TOOLS_DIR"
 
 # Gradle 7.6.4
-GRADLE_VERSION="7.6.4"
-GRADLE_BIN="/opt/gradle-${GRADLE_VERSION}/bin/gradle"
-if [ ! -f "$GRADLE_BIN" ]; then
-  wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/g.zip
+GV="7.6.4"
+GRADLE="/opt/gradle-${GV}/bin/gradle"
+if [ ! -f "$GRADLE" ]; then
+  wget -q "https://services.gradle.org/distributions/gradle-${GV}-bin.zip" -O /tmp/g.zip
   sudo unzip -q /tmp/g.zip -d /opt/
   rm -f /tmp/g.zip
 fi
@@ -25,34 +26,34 @@ PKG_PATH=$(echo "$PACKAGE_NAME" | tr '.' '/')
 mkdir -p app/src/main/java/$PKG_PATH
 mkdir -p app/src/main/res/{values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi}
 
-# google-services.json
+# ── google-services.json ─────────────────────────────────────
 echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
 python3 -c "
 import json
 with open('app/google-services.json') as f: d=json.load(f)
 for c in d.get('client',[]): c['client_info']['android_client_info']['package_name']='${PACKAGE_NAME}'
 with open('app/google-services.json','w') as f: json.dump(d,f,indent=2)
-print('google-services.json ok')
+print('gsj ok')
 "
 
-# Java files
+# ── Java kaynak dosyaları ────────────────────────────────────
 for JF in MainActivity AppFirebaseMessagingService PlayerActivity ContentAdapter M3uParser; do
   SRC="$GITHUB_WORKSPACE/${JF}.java"
   DST="app/src/main/java/$PKG_PATH/${JF}.java"
   if [ -f "$SRC" ]; then
     sed "s/PACKAGE_PLACEHOLDER/${PACKAGE_NAME}/g" "$SRC" > "$DST"
     if [ "$JF" = "MainActivity" ]; then
-      sed -i "s/OWNER_ID_PLACEHOLDER/${OWNER_ID}/g" "$DST"
-      sed -i "s/APP_ID_PLACEHOLDER/${APP_ID}/g" "$DST"
-      sed -i "s/APP_TOPIC_PLACEHOLDER/app_${APP_ID}/g" "$DST"
+      sed -i "s/OWNER_ID_PLACEHOLDER/${OWNER_ID}/g"          "$DST"
+      sed -i "s/APP_ID_PLACEHOLDER/${APP_ID}/g"              "$DST"
+      sed -i "s/APP_TOPIC_PLACEHOLDER/app_${APP_ID}/g"       "$DST"
       sed -i "s|CONTENT_URL_PLACEHOLDER|${CONTENT_URL:-https://example.com}|g" "$DST"
     fi
-    echo "$JF.java copied"
+    echo "$JF copied"
   fi
 done
 
-# AndroidManifest.xml
-cat > app/src/main/AndroidManifest.xml << 'MEOF'
+# ── AndroidManifest ──────────────────────────────────────────
+cat > app/src/main/AndroidManifest.xml << MEOF
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -62,6 +63,7 @@ cat > app/src/main/AndroidManifest.xml << 'MEOF'
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:label="${APP_NAME}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
@@ -72,7 +74,12 @@ cat > app/src/main/AndroidManifest.xml << 'MEOF'
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|keyboardHidden"/>
+            android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
         <activity
             android:name=".PlayerActivity"
             android:exported="false"
@@ -87,27 +94,7 @@ cat > app/src/main/AndroidManifest.xml << 'MEOF'
 </manifest>
 MEOF
 
-# Inject app_name and intent-filters into manifest
-sed -i "s|android:name=\".MainActivity\"|android:name=\".MainActivity\"\n            android:label=\"${APP_NAME}\"|g" app/src/main/AndroidManifest.xml
-
-# Add launcher intent filter
-cat > /tmp/manifest_patch.py << 'PYEOF'
-import re, sys
-content = open('app/src/main/AndroidManifest.xml').read()
-old = 'android:configChanges="orientation|screenSize|keyboardHidden"/>'
-new = '''android:configChanges="orientation|screenSize|keyboardHidden">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>'''
-content = content.replace(old, new, 1)
-open('app/src/main/AndroidManifest.xml','w').write(content)
-print("manifest patched")
-PYEOF
-python3 /tmp/manifest_patch.py
-
-# Colors
+# ── Resources ────────────────────────────────────────────────
 cat > app/src/main/res/values/colors.xml << CEOF
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -117,7 +104,6 @@ cat > app/src/main/res/values/colors.xml << CEOF
 </resources>
 CEOF
 
-# Strings
 cat > app/src/main/res/values/strings.xml << SEOF
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -126,8 +112,7 @@ cat > app/src/main/res/values/strings.xml << SEOF
 </resources>
 SEOF
 
-# Styles
-cat > app/src/main/res/values/styles.xml << 'STEOF'
+cat > app/src/main/res/values/styles.xml << STEOF
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
@@ -139,7 +124,7 @@ cat > app/src/main/res/values/styles.xml << 'STEOF'
 </resources>
 STEOF
 
-# Icons
+# ── Icons ────────────────────────────────────────────────────
 sudo apt-get install -y -qq imagemagick 2>/dev/null
 gen_icon() {
   SZ=$1 DPI=$2
@@ -156,8 +141,8 @@ gen_icon() {
 gen_icon 72 hdpi; gen_icon 48 mdpi; gen_icon 96 xhdpi
 gen_icon 144 xxhdpi; gen_icon 192 xxxhdpi
 
-# gradle.properties
-cat > gradle.properties << 'GPEOF'
+# ── gradle.properties ────────────────────────────────────────
+cat > gradle.properties << GPEOF
 android.useAndroidX=true
 android.enableJetifier=false
 org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m
@@ -165,8 +150,8 @@ android.nonTransitiveRClass=true
 kotlin.stdlib.default.dependency=false
 GPEOF
 
-# settings.gradle
-cat > settings.gradle << 'SGEOF'
+# ── settings.gradle ──────────────────────────────────────────
+cat > settings.gradle << SGEOF
 pluginManagement {
     repositories {
         google()
@@ -185,8 +170,8 @@ rootProject.name = "creatorapp"
 include ':app'
 SGEOF
 
-# Root build.gradle — AGP 7.4.2
-cat > build.gradle << 'BGEOF'
+# ── Root build.gradle ─────────────────────────────────────────
+cat > build.gradle << BGEOF
 buildscript {
     repositories {
         google()
@@ -199,7 +184,7 @@ buildscript {
 }
 BGEOF
 
-# App build.gradle
+# ── App build.gradle ──────────────────────────────────────────
 PKG=$PACKAGE_NAME
 VC=${VERSION_CODE:-1}
 VN=${VERSION_NAME:-1.0}
@@ -221,10 +206,10 @@ android {
         multiDexEnabled true
     }
 
+    // Java 8 — desugaring gerekmez, tüm kütüphanelerle uyumlu
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
-        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     buildTypes {
@@ -249,27 +234,30 @@ android {
 
 configurations.all {
     resolutionStrategy {
+        // Kotlin stdlib tek sürüme sabitle
         force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
         force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.8.22'
         // okio-jvm 3.x dex hatası — 2.x'e sabitle
         force 'com.squareup.okio:okio:2.10.0'
-        force 'com.squareup.okio:okio-jvm:2.10.0'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+        // okio-jvm 3.x'i tamamen dışla
+        exclude group: 'com.squareup.okio', module: 'okio-jvm'
     }
 }
 
 dependencies {
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.3'
-
+    // Firebase
     implementation platform('com.google.firebase:firebase-bom:32.7.4')
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
 
+    // AndroidX
     implementation 'androidx.core:core:1.9.0'
     implementation 'androidx.recyclerview:recyclerview:1.3.0'
     implementation 'androidx.multidex:multidex:2.0.1'
 
+    // ExoPlayer Media3 1.2.1
     implementation 'androidx.media3:media3-exoplayer:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.2.1'
@@ -278,40 +266,40 @@ dependencies {
     implementation 'androidx.media3:media3-ui:1.2.1'
     implementation 'androidx.media3:media3-datasource-okhttp:1.2.1'
 
-    // OkHttp 3.x — okio 2.x ile uyumlu, dex sorunu yok
+    // OkHttp 3.x — okio 2.x kullanır, dex sorunu yok
     implementation('com.squareup.okhttp3:okhttp:3.12.13') {
-        exclude group: 'com.squareup.okio', module: 'okio'
+        exclude group: 'com.squareup.okio', module: 'okio-jvm'
     }
     implementation 'com.squareup.okio:okio:2.10.0'
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
 ABEOF
 
-# Gradle wrapper
+# ── Gradle wrapper ───────────────────────────────────────────
 mkdir -p gradle/wrapper
 cat > gradle/wrapper/gradle-wrapper.properties << GWEOF
 distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
-distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
+distributionUrl=https\\://services.gradle.org/distributions/gradle-${GV}-bin.zip
 zipStoreBase=GRADLE_USER_HOME
 zipStorePath=wrapper/dists
 GWEOF
 
-# Build
-echo "Gradle build starting..."
-"$GRADLE_BIN" assembleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -40
+# ── Build ────────────────────────────────────────────────────
+echo "Starting Gradle build (AGP 7.4.2 / Gradle 7.6.4 / Java 8)..."
+"$GRADLE" assembleRelease --no-daemon --no-configuration-cache 2>&1 | tail -50
 
 APK_IN="$WS/app/build/outputs/apk/release/app-release-unsigned.apk"
 APK_OUT="/tmp/${PACKAGE_NAME}_v${VC}.apk"
 AAB_OUT="/tmp/${PACKAGE_NAME}_v${VC}.aab"
 
 if [ ! -f "$APK_IN" ]; then
-  echo "APK not found at $APK_IN"
-  ls "$WS/app/build/outputs/" 2>/dev/null || echo "No outputs dir"
+  echo "APK not found. Build output:"
+  find "$WS/app/build" -name "*.apk" 2>/dev/null || echo "No APK files"
   exit 1
 fi
 
-# Sign
+# ── Sign ─────────────────────────────────────────────────────
 keytool -genkey -v \
   -keystore /tmp/ks.jks -alias release \
   -keyalg RSA -keysize 2048 -validity 10000 \
@@ -325,11 +313,11 @@ keytool -genkey -v \
   --ks-pass pass:android --key-pass pass:android \
   --out "$APK_OUT" /tmp/aligned.apk
 
-# AAB
-"$GRADLE_BIN" bundleRelease --no-daemon --no-configuration-cache -q 2>&1 | tail -10
+# ── AAB ──────────────────────────────────────────────────────
+"$GRADLE" bundleRelease --no-daemon --no-configuration-cache 2>&1 | tail -10
 AAB_IN="$WS/app/build/outputs/bundle/release/app-release.aab"
-[ -f "$AAB_IN" ] && cp "$AAB_IN" "$AAB_OUT" || echo "AAB not found, skipping"
+[ -f "$AAB_IN" ] && cp "$AAB_IN" "$AAB_OUT" || echo "AAB skipped"
 
 echo "APK_FILE=$APK_OUT" >> $GITHUB_ENV
 echo "AAB_FILE=$AAB_OUT" >> $GITHUB_ENV
-echo "BUILD DONE - APK: $(du -sh $APK_OUT 2>/dev/null | cut -f1)"
+echo "BUILD DONE: $(du -sh $APK_OUT 2>/dev/null | cut -f1)"
