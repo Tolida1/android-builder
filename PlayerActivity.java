@@ -9,7 +9,6 @@ import android.os.Handler;
 import android.view.*;
 import android.widget.*;
 import androidx.media3.common.*;
-import androidx.media3.common.util.Util;
 import androidx.media3.datasource.*;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.*;
@@ -448,4 +447,3 @@ public class PlayerActivity extends Activity {
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_FULLSCREEN);
     }
 }
-
