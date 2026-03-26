@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -15,15 +16,14 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.messaging.FirebaseMessaging;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,9 +42,14 @@ public class MainActivity extends Activity {
 
     private FirebaseFirestore    db;
     private ListenerRegistration configListener;
-    private List<Map<String,Object>> menuSections = new ArrayList<>();
-    private int    activeMenuIndex = -1;
-    private String primaryColor    = "#6c63ff";
+
+    // Tüm bölümler (aktif+pasif)
+    private final List<Map<String,Object>> allSections    = new ArrayList<>();
+    // Sadece aktif bölümler — bottom nav için
+    private final List<Map<String,Object>> activeSections = new ArrayList<>();
+
+    private int    activeNavIndex = -1;
+    private String primaryColor   = "#6c63ff";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,6 +64,7 @@ public class MainActivity extends Activity {
         listenConfig();
     }
 
+    // ── Layout ────────────────────────────────────────────────
     private void buildLayout() {
         rootLayout = new FrameLayout(this);
         rootLayout.setBackgroundColor(Color.BLACK);
@@ -74,8 +80,7 @@ public class MainActivity extends Activity {
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         ws.setUserAgentString("Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile Safari/537.36");
         webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView v, String u) {
+            @Override public void onPageFinished(WebView v, String u) {
                 progressBar.setVisibility(View.GONE);
             }
         });
@@ -105,6 +110,7 @@ public class MainActivity extends Activity {
         setContentView(rootLayout);
     }
 
+    // ── Firestore Config ──────────────────────────────────────
     @SuppressWarnings("unchecked")
     private void listenConfig() {
         configListener = db.collection("apps").document(OWNER_ID)
@@ -112,103 +118,181 @@ public class MainActivity extends Activity {
             .addSnapshotListener((snap, err) -> {
                 if (err != null || snap == null || !snap.exists()) return;
 
+                // Primary color
                 String pc = snap.getString("config.primaryColor");
                 if (pc != null && !pc.isEmpty()) primaryColor = pc;
                 try { getWindow().setStatusBarColor(Color.parseColor(primaryColor)); }
                 catch (Exception ignored) {}
 
+                // Menu sections
+                allSections.clear();
+                activeSections.clear();
                 List<Object> raw = (List<Object>) snap.get("config.menu");
-                menuSections.clear();
                 if (raw != null) {
                     for (Object o : raw) {
-                        if (o instanceof Map) {
-                            menuSections.add((Map<String, Object>) o);
-                        }
+                        if (!(o instanceof Map)) continue;
+                        Map<String,Object> s = (Map<String,Object>) o;
+                        allSections.add(s);
+                        // Aktif kontrolü (active field yoksa varsayılan true)
+                        Object activeObj = s.get("active");
+                        boolean isActive = !(Boolean.FALSE.equals(activeObj));
+                        if (isActive) activeSections.add(s);
                     }
                 }
 
                 runOnUiThread(() -> {
                     buildBottomNav();
-                    if (activeMenuIndex < 0 && !menuSections.isEmpty()) {
-                        selectMenu(0);
-                    } else if (menuSections.isEmpty()) {
+                    if (activeNavIndex < 0 && !activeSections.isEmpty()) {
+                        selectSection(0);
+                    } else if (activeSections.isEmpty()) {
                         String url = snap.getString("config.contentUrl");
                         showWebView(url != null ? url : DEFAULT_URL);
+                    } else if (activeNavIndex >= 0 && activeNavIndex < activeSections.size()) {
+                        // Config değişti, mevcut bölümü yenile
+                        selectSection(activeNavIndex);
                     }
                 });
             });
     }
 
+    // ── Bottom Nav (sadece aktif bölümler) ────────────────────
     private void buildBottomNav() {
         bottomNav.removeAllViews();
-        if (menuSections.isEmpty()) {
-            bottomNav.setVisibility(View.GONE);
-            return;
-        }
+        if (activeSections.isEmpty()) { bottomNav.setVisibility(View.GONE); return; }
+        // Tek bölüm varsa nav gizle
+        if (activeSections.size() == 1) { bottomNav.setVisibility(View.GONE); return; }
         bottomNav.setVisibility(View.VISIBLE);
+
         int activeColor;
         try { activeColor = Color.parseColor(primaryColor); }
         catch (Exception e) { activeColor = Color.parseColor("#6c63ff"); }
         int inactiveColor = Color.parseColor("#606080");
 
-        for (int i = 0; i < menuSections.size(); i++) {
+        for (int i = 0; i < activeSections.size(); i++) {
             final int idx = i;
-            Map<String, Object> s = menuSections.get(i);
+            Map<String,Object> s = activeSections.get(i);
             String title = strOr(s, "title", "");
             String icon  = strOr(s, "icon",  "▶");
-            boolean isActive = (idx == activeMenuIndex);
+            boolean isSel = (idx == activeNavIndex);
 
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.CENTER);
             item.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
-            if (isActive) item.setBackgroundColor(Color.parseColor("#1a1a2e"));
-            item.setOnClickListener(v -> selectMenu(idx));
+            if (isSel) item.setBackgroundColor(Color.parseColor("#1a1a2e"));
+            item.setOnClickListener(v -> selectSection(idx));
 
             TextView iv = new TextView(this);
             iv.setText(icon.isEmpty() ? "▶" : icon);
-            iv.setTextSize(18);
-            iv.setGravity(Gravity.CENTER);
-            iv.setTextColor(isActive ? activeColor : inactiveColor);
+            iv.setTextSize(18); iv.setGravity(Gravity.CENTER);
+            iv.setTextColor(isSel ? activeColor : inactiveColor);
 
             TextView tv = new TextView(this);
             tv.setText(title);
-            tv.setTextSize(9);
-            tv.setGravity(Gravity.CENTER);
-            tv.setTextColor(isActive ? activeColor : inactiveColor);
+            tv.setTextSize(9); tv.setGravity(Gravity.CENTER);
+            tv.setTextColor(isSel ? activeColor : inactiveColor);
 
-            item.addView(iv);
-            item.addView(tv);
+            item.addView(iv); item.addView(tv);
             bottomNav.addView(item);
         }
     }
 
+    // ── Select Section ────────────────────────────────────────
     @SuppressWarnings("unchecked")
-    private void selectMenu(int idx) {
-        if (idx >= menuSections.size()) return;
-        activeMenuIndex = idx;
+    private void selectSection(int idx) {
+        if (idx >= activeSections.size()) return;
+        activeNavIndex = idx;
         buildBottomNav();
-        Map<String, Object> section = menuSections.get(idx);
+        Map<String,Object> section = activeSections.get(idx);
         String type    = strOr(section, "type",    "web");
-        String url     = strOr(section, "url",     "");
         String display = strOr(section, "display", "list");
+        String url     = strOr(section, "url",     "");
 
         if ("m3u".equals(type) || "iptv".equals(type)) {
+            // Aktif içerikleri filtrele
             List<Object> rawItems = (List<Object>) section.get("items");
-            List<Map<String, Object>> items = new ArrayList<>();
+            List<Map<String,Object>> activeItems = new ArrayList<>();
             if (rawItems != null) {
                 for (Object o : rawItems) {
-                    if (o instanceof Map) items.add((Map<String, Object>) o);
+                    if (!(o instanceof Map)) continue;
+                    Map<String,Object> item = (Map<String,Object>) o;
+                    Object activeObj = item.get("active");
+                    boolean isActive = !(Boolean.FALSE.equals(activeObj));
+                    if (isActive) activeItems.add(item);
                 }
             }
-            showContentList(items, display);
+
+            if ("single".equals(display)) {
+                // Tekli mod: sadece bir içerik varsa direkt aç
+                if (activeItems.size() == 1) {
+                    Map<String,Object> item = activeItems.get(0);
+                    openPlayer(strOr(item,"url",""), strOr(item,"name",""),
+                               strOr(item,"referer",""), strOr(item,"origin",""));
+                } else if (activeItems.size() > 1) {
+                    // Birden fazla varsa liste göster
+                    showContentList(activeItems, "list");
+                } else if (!url.isEmpty()) {
+                    // items boşsa M3U URL'den yükle
+                    loadM3uFromUrl(url, section, display);
+                }
+            } else {
+                if (!activeItems.isEmpty()) {
+                    showContentList(activeItems, display);
+                } else if (!url.isEmpty()) {
+                    // items yoksa M3U URL'den parse et
+                    loadM3uFromUrl(url, section, display);
+                } else {
+                    Toast.makeText(this, "İçerik bulunamadı", Toast.LENGTH_SHORT).show();
+                }
+            }
         } else if ("video".equals(type)) {
-            openPlayer(url, strOr(section, "title", ""), "", "");
+            String referer = strOr(section, "referer", "");
+            String origin  = strOr(section, "origin",  "");
+            openPlayer(url, strOr(section, "title", ""), referer, origin);
         } else {
+            // Web
             showWebView(url);
         }
     }
 
+    // ── M3U URL'den parse et (arka planda) ───────────────────
+    private void loadM3uFromUrl(String m3uUrl, Map<String,Object> section, String display) {
+        progressBar.setVisibility(View.VISIBLE);
+        webView.setVisibility(View.GONE);
+        contentRecycler.setVisibility(View.GONE);
+
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    List<M3uParser.Channel> channels = M3uParser.parseFromUrl(m3uUrl);
+                    List<Map<String,Object>> items = new ArrayList<>();
+                    for (M3uParser.Channel ch : channels) {
+                        items.add(ch.toMap());
+                    }
+                    runOnUiThread(() -> {
+                        progressBar.setVisibility(View.GONE);
+                        if (items.isEmpty()) {
+                            Toast.makeText(MainActivity.this, "Liste boş", Toast.LENGTH_SHORT).show();
+                        } else if ("single".equals(display) && items.size() == 1) {
+                            Map<String,Object> item = items.get(0);
+                            openPlayer(strOr(item,"url",""), strOr(item,"name",""),
+                                       strOr(item,"referer",""), strOr(item,"origin",""));
+                        } else {
+                            showContentList(items, display);
+                        }
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> {
+                        progressBar.setVisibility(View.GONE);
+                        Toast.makeText(MainActivity.this,
+                            "M3U yüklenemedi: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    });
+                }
+            }
+        }).start();
+    }
+
+    // ── Show WebView ──────────────────────────────────────────
     private void showWebView(String url) {
         webView.setVisibility(View.VISIBLE);
         contentRecycler.setVisibility(View.GONE);
@@ -218,7 +302,8 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showContentList(List<Map<String, Object>> items, String display) {
+    // ── Show Content List ─────────────────────────────────────
+    private void showContentList(List<Map<String,Object>> items, String display) {
         webView.setVisibility(View.GONE);
         contentRecycler.setVisibility(View.VISIBLE);
         if ("grid".equals(display)) {
@@ -227,44 +312,40 @@ public class MainActivity extends Activity {
             contentRecycler.setLayoutManager(new LinearLayoutManager(this));
         }
         contentRecycler.setAdapter(new ContentAdapter(this, items, display, primaryColor,
-            item -> {
-                String url     = strOr(item, "url",     "");
-                String title   = strOr(item, "name",    "");
-                String referer = strOr(item, "referer", "");
-                String origin  = strOr(item, "origin",  "");
-                openPlayer(url, title, referer, origin);
-            }));
+            item -> openPlayer(
+                strOr(item, "url",     ""),
+                strOr(item, "name",    ""),
+                strOr(item, "referer", ""),
+                strOr(item, "origin",  "")
+            )));
     }
 
+    // ── Open Player ───────────────────────────────────────────
     void openPlayer(String url, String title, String referer, String origin) {
+        if (url == null || url.isEmpty()) {
+            Toast.makeText(this, "URL bulunamadı", Toast.LENGTH_SHORT).show();
+            return;
+        }
         Intent i = new Intent(this, PlayerActivity.class);
         i.putExtra("url",     url);
-        i.putExtra("title",   title);
-        i.putExtra("referer", referer);
-        i.putExtra("origin",  origin);
+        i.putExtra("title",   title   != null ? title   : "");
+        i.putExtra("referer", referer != null ? referer : "");
+        i.putExtra("origin",  origin  != null ? origin  : "");
         startActivity(i);
     }
 
-    static String strOr(Map<String, Object> m, String k, String def) {
+    // ── Helpers ───────────────────────────────────────────────
+    static String strOr(Map<String,Object> m, String k, String def) {
         Object v = m.get(k);
-        return (v instanceof String && !((String) v).isEmpty()) ? (String) v : def;
+        return (v instanceof String && !((String)v).isEmpty()) ? (String)v : def;
     }
+    int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
-    int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
+    @Override public void onBackPressed() {
+        if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
-
-    @Override
-    public void onBackPressed() {
-        if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         super.onDestroy();
         if (configListener != null) configListener.remove();
     }
