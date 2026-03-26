@@ -1329,7 +1329,6 @@ import com.applovin.mediation.ads.MaxInterstitialAd;
 import com.applovin.mediation.ads.MaxRewardedAd;
 import com.applovin.mediation.MaxRewardedAdListener;
 import com.applovin.mediation.MaxReward;
-import com.applovin.mediation.banner.MaxAdView;
 
 import java.util.Map;
 
@@ -1350,7 +1349,6 @@ public class AdManager {
     private int          unityInterFreq  = 0;
 
     // AppLovin
-    private MaxAdView      aplBanner;
     private MaxInterstitialAd aplInter;
     private MaxRewardedAd  aplRewarded;
     private int            aplInterCount = 0;
@@ -1498,16 +1496,7 @@ public class AdManager {
                 Log.d(TAG,"AppLovin init ok");
                 activity.runOnUiThread(new Runnable() {
                     @Override public void run() {
-                        // Banner
-                        if (!bannerId.isEmpty() && bannerContainer != null) {
-                            aplBanner = new MaxAdView(bannerId, activity);
-                            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(50));
-                            lp.gravity = "top".equals(banPos) ? Gravity.TOP : Gravity.BOTTOM;
-                            bannerContainer.addView(aplBanner, lp);
-                            aplBanner.setExtraParameter("adaptive_banner", "true");
-                            aplBanner.loadAd();
-                        }
+                        // AppLovin banner (MAX SDK ayrı entegrasyon gerektirir, şimdilik atla)
                         // Interstitial
                         if (!interId.isEmpty()) {
                             aplInter = new MaxInterstitialAd(interId, activity);
@@ -1612,7 +1601,7 @@ public class AdManager {
 
     public void onDestroy() {
         try { if (admobBanner  != null) admobBanner.destroy(); }  catch (Exception ignored) {}
-        try { if (aplBanner    != null) aplBanner.destroy();   }  catch (Exception ignored) {}
+        // aplBanner destroy (disabled)
     }
 }
 
@@ -1908,7 +1897,7 @@ dependencies {
     implementation 'com.unity3d.ads:unity-ads:4.9.2'
 
     // AppLovin MAX
-    implementation 'com.applovin:applovin-sdk:12.4.2'
+    implementation 'com.applovin.mediation:applovin-sdk:12.4.2'
 
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
