@@ -1,158 +1,116 @@
 package PACKAGE_PLACEHOLDER;
 
-import java.io.*;
-import java.net.*;
-import java.util.*;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.StringReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-/**
- * M3uParser — Tüm M3U formatlarını parse eder
- * Desteklenen:
- *  - #EXTM3U başlıklı listeler
- *  - #EXTINF satırları (tvg-name, tvg-logo, group-title)
- *  - #EXTVLCOPT:http-referrer ve http-origin
- *  - Uzantısız URL'ler (video formatına bağımsız)
- */
 public class M3uParser {
 
     public static class Channel {
-        public String name     = "";
-        public String url      = "";
-        public String logo     = "";
-        public String group    = "";
-        public String referer  = "";
-        public String origin   = "";
-        public Map<String,String> extra = new HashMap<>();
+        public String name    = "";
+        public String url     = "";
+        public String logo    = "";
+        public String group   = "";
+        public String referer = "";
+        public String origin  = "";
 
-        public Map<String,Object> toMap() {
-            Map<String,Object> m = new HashMap<>();
-            m.put("name",   name);
-            m.put("url",    url);
-            m.put("logo",   logo);
-            m.put("group",  group);
-            m.put("referer",referer);
-            m.put("origin", origin);
+        public Map<String, Object> toMap() {
+            Map<String, Object> m = new HashMap<>();
+            m.put("name",    name);
+            m.put("url",     url);
+            m.put("logo",    logo);
+            m.put("group",   group);
+            m.put("referer", referer);
+            m.put("origin",  origin);
             return m;
         }
     }
 
-    /** Parse from URL (runs in background) */
     public static List<Channel> parseFromUrl(String m3uUrl) throws Exception {
-        URL url = new URL(m3uUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        HttpURLConnection conn = (HttpURLConnection) new URL(m3uUrl).openConnection();
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(30000);
-        conn.setRequestProperty("User-Agent","VLC/3.0 LibVLC/3.0");
+        conn.setRequestProperty("User-Agent", "VLC/3.0 LibVLC/3.0");
         BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        return parseFromReader(reader);
+        return parse(reader);
     }
 
-    /** Parse from raw string */
     public static List<Channel> parseFromString(String content) throws Exception {
-        return parseFromReader(new BufferedReader(new StringReader(content)));
+        return parse(new BufferedReader(new StringReader(content)));
     }
 
-    private static List<Channel> parseFromReader(BufferedReader reader) throws Exception {
+    private static List<Channel> parse(BufferedReader reader) throws Exception {
         List<Channel> channels = new ArrayList<>();
         Channel current = null;
         String line;
-
         while ((line = reader.readLine()) != null) {
             line = line.trim();
-            if (line.isEmpty()) continue;
-
-            if (line.startsWith("#EXTM3U")) {
-                // Header — skip
-                continue;
-            }
-
+            if (line.isEmpty() || line.equals("#EXTM3U")) continue;
             if (line.startsWith("#EXTINF:")) {
                 current = new Channel();
-                parseExtInf(line, current);
-                continue;
+                int ci = line.lastIndexOf(',');
+                if (ci >= 0 && ci < line.length() - 1)
+                    current.name = line.substring(ci + 1).trim();
+                current.logo  = attr(line, "tvg-logo");
+                current.group = attr(line, "group-title");
+                String tn = attr(line, "tvg-name");
+                if (!tn.isEmpty() && current.name.isEmpty()) current.name = tn;
+            } else if (line.startsWith("#EXTVLCOPT:")) {
+                if (current != null) {
+                    String opt = line.substring("#EXTVLCOPT:".length()).trim();
+                    if (opt.startsWith("http-referrer="))
+                        current.referer = opt.substring("http-referrer=".length()).trim();
+                    else if (opt.startsWith("http-origin="))
+                        current.origin = opt.substring("http-origin=".length()).trim();
+                }
+            } else if (!line.startsWith("#")) {
+                if (current == null) current = new Channel();
+                current.url = line;
+                if (current.name.isEmpty()) current.name = nameFromUrl(line);
+                channels.add(current);
+                current = null;
             }
-
-            if (line.startsWith("#EXTVLCOPT:")) {
-                if (current != null) parseVlcOpt(line, current);
-                continue;
-            }
-
-            if (line.startsWith("#")) continue; // Other comments
-
-            // URL line
-            if (current == null) current = new Channel();
-            current.url = line;
-            if (current.name.isEmpty()) {
-                // Extract name from URL
-                current.name = extractNameFromUrl(line);
-            }
-            channels.add(current);
-            current = null;
         }
-
         reader.close();
         return channels;
     }
 
-    private static void parseExtInf(String line, Channel ch) {
-        // Format: #EXTINF:-1 tvg-id="..." tvg-name="..." tvg-logo="..." group-title="...",Display Name
-        int commaIdx = line.lastIndexOf(',');
-        if (commaIdx >= 0 && commaIdx < line.length()-1) {
-            ch.name = line.substring(commaIdx+1).trim();
-        }
-
-        // Parse attributes
-        String attrs = commaIdx > 0 ? line.substring(0, commaIdx) : line;
-
-        ch.logo  = extractAttr(attrs, "tvg-logo");
-        ch.group = extractAttr(attrs, "group-title");
-
-        String tvgName = extractAttr(attrs, "tvg-name");
-        if (!tvgName.isEmpty() && ch.name.isEmpty()) ch.name = tvgName;
-    }
-
-    private static void parseVlcOpt(String line, Channel ch) {
-        // #EXTVLCOPT:http-referrer=https://...
-        // #EXTVLCOPT:http-origin=https://...
-        String opt = line.substring("#EXTVLCOPT:".length()).trim();
-        if (opt.startsWith("http-referrer=")) {
-            ch.referer = opt.substring("http-referrer=".length()).trim();
-        } else if (opt.startsWith("http-origin=")) {
-            ch.origin = opt.substring("http-origin=".length()).trim();
-        }
-    }
-
-    private static String extractAttr(String text, String attr) {
-        // Try: attr="value" or attr='value'
+    private static String attr(String text, String key) {
         String[] quotes = {"\"", "'"};
         for (String q : quotes) {
-            String key = attr + "=" + q;
-            int start = text.toLowerCase().indexOf(key.toLowerCase());
-            if (start >= 0) {
-                start += key.length();
-                int end = text.indexOf(q, start);
-                if (end >= 0) return text.substring(start, end).trim();
+            String k = key + "=" + q;
+            int idx = text.toLowerCase().indexOf(k.toLowerCase());
+            if (idx >= 0) {
+                int s = idx + k.length();
+                int e = text.indexOf(q, s);
+                if (e >= 0) return text.substring(s, e).trim();
             }
         }
         return "";
     }
 
-    private static String extractNameFromUrl(String url) {
+    private static String nameFromUrl(String url) {
         try {
             String path = new URL(url).getPath();
             String[] parts = path.split("/");
             if (parts.length > 0) {
-                String last = parts[parts.length-1];
-                // Remove extension
+                String last = parts[parts.length - 1];
                 int dot = last.lastIndexOf('.');
                 if (dot > 0) last = last.substring(0, dot);
-                return last.replace("-","").replace("_"," ");
+                return last.replace("-", " ").replace("_", " ");
             }
-        } catch(Exception ignored){}
+        } catch (Exception ignored) {}
         return "Channel";
     }
 
-    /** Group channels by their group field */
-    public static Map<String, List<Channel>> groupChannels(List<Channel> channels) {
+    public static Map<String, List<Channel>> group(List<Channel> channels) {
         Map<String, List<Channel>> map = new LinkedHashMap<>();
         for (Channel ch : channels) {
             String g = ch.group.isEmpty() ? "Genel" : ch.group;
@@ -162,4 +120,3 @@ public class M3uParser {
         return map;
     }
 }
-
