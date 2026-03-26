@@ -224,6 +224,7 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+        coreLibraryDesugaringEnabled true
     }
 
     buildTypes {
@@ -250,12 +251,17 @@ configurations.all {
     resolutionStrategy {
         force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
         force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.8.22'
+        // okio-jvm 3.x dex hatası — 2.x'e sabitle
+        force 'com.squareup.okio:okio:2.10.0'
+        force 'com.squareup.okio:okio-jvm:2.10.0'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
     }
 }
 
 dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.3'
+
     implementation platform('com.google.firebase:firebase-bom:32.7.4')
     implementation 'com.google.firebase:firebase-firestore'
     implementation 'com.google.firebase:firebase-messaging'
@@ -272,7 +278,11 @@ dependencies {
     implementation 'androidx.media3:media3-ui:1.2.1'
     implementation 'androidx.media3:media3-datasource-okhttp:1.2.1'
 
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // OkHttp 3.x — okio 2.x ile uyumlu, dex sorunu yok
+    implementation('com.squareup.okhttp3:okhttp:3.12.13') {
+        exclude group: 'com.squareup.okio', module: 'okio'
+    }
+    implementation 'com.squareup.okio:okio:2.10.0'
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
 ABEOF
