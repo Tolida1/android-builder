@@ -8,14 +8,24 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.webkit.*;
-import android.widget.*;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import com.google.firebase.firestore.*;
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.ListenerRegistration;
 import com.google.firebase.messaging.FirebaseMessaging;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class MainActivity extends Activity {
 
@@ -32,7 +42,6 @@ public class MainActivity extends Activity {
 
     private FirebaseFirestore    db;
     private ListenerRegistration configListener;
-    private Map<String,Object>   appConfig    = new HashMap<>();
     private List<Map<String,Object>> menuSections = new ArrayList<>();
     private int    activeMenuIndex = -1;
     private String primaryColor    = "#6c63ff";
@@ -41,10 +50,12 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                             WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN);
         buildLayout();
-        subscribeFCM();
+        FirebaseMessaging.getInstance().subscribeToTopic(FCM_TOPIC);
+        db = FirebaseFirestore.getInstance();
         listenConfig();
     }
 
@@ -63,7 +74,8 @@ public class MainActivity extends Activity {
         ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         ws.setUserAgentString("Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/110.0.0.0 Mobile Safari/537.36");
         webView.setWebViewClient(new WebViewClient() {
-            @Override public void onPageFinished(WebView v, String u) {
+            @Override
+            public void onPageFinished(WebView v, String u) {
                 progressBar.setVisibility(View.GONE);
             }
         });
@@ -81,7 +93,7 @@ public class MainActivity extends Activity {
         bottomNav.setBackgroundColor(Color.parseColor("#0f0f1a"));
         bottomNav.setVisibility(View.GONE);
 
-        FrameLayout.LayoutParams fill = new FrameLayout.LayoutParams(-1,-1);
+        FrameLayout.LayoutParams fill = new FrameLayout.LayoutParams(-1, -1);
         FrameLayout.LayoutParams pb   = new FrameLayout.LayoutParams(-1, dp(4));
         FrameLayout.LayoutParams nav  = new FrameLayout.LayoutParams(-1, dp(58));
         nav.gravity = Gravity.BOTTOM;
@@ -93,79 +105,80 @@ public class MainActivity extends Activity {
         setContentView(rootLayout);
     }
 
-    private void subscribeFCM() {
-        FirebaseMessaging.getInstance().subscribeToTopic(FCM_TOPIC);
-    }
-
-    private void listenConfig() {
-        db = FirebaseFirestore.getInstance();
-        db.collection("apps").document(OWNER_ID)
-          .collection("list").document(APP_ID)
-          .addSnapshotListener((snap, err) -> {
-              if (err != null || snap == null || !snap.exists()) return;
-              appConfig = snap.getData() != null ? snap.getData() : new HashMap<>();
-              processConfig(snap);
-          });
-    }
-
     @SuppressWarnings("unchecked")
-    private void processConfig(DocumentSnapshot snap) {
-        // Primary color
-        String pc = snap.getString("config.primaryColor");
-        if (pc != null && !pc.isEmpty()) primaryColor = pc;
-        try { getWindow().setStatusBarColor(Color.parseColor(primaryColor)); } catch(Exception ignored){}
+    private void listenConfig() {
+        configListener = db.collection("apps").document(OWNER_ID)
+            .collection("list").document(APP_ID)
+            .addSnapshotListener((snap, err) -> {
+                if (err != null || snap == null || !snap.exists()) return;
 
-        // Menu
-        List<Object> raw = (List<Object>) snap.get("config.menu");
-        menuSections.clear();
-        if (raw != null) {
-            for (Object o : raw) if (o instanceof Map) menuSections.add((Map<String,Object>)o);
-        }
+                String pc = snap.getString("config.primaryColor");
+                if (pc != null && !pc.isEmpty()) primaryColor = pc;
+                try { getWindow().setStatusBarColor(Color.parseColor(primaryColor)); }
+                catch (Exception ignored) {}
 
-        runOnUiThread(() -> {
-            buildBottomNav();
-            if (activeMenuIndex < 0 && !menuSections.isEmpty()) {
-                selectMenu(0);
-            } else if (menuSections.isEmpty()) {
-                String url = snap.getString("config.contentUrl");
-                showWebView(url != null ? url : DEFAULT_URL);
-            }
-        });
+                List<Object> raw = (List<Object>) snap.get("config.menu");
+                menuSections.clear();
+                if (raw != null) {
+                    for (Object o : raw) {
+                        if (o instanceof Map) {
+                            menuSections.add((Map<String, Object>) o);
+                        }
+                    }
+                }
+
+                runOnUiThread(() -> {
+                    buildBottomNav();
+                    if (activeMenuIndex < 0 && !menuSections.isEmpty()) {
+                        selectMenu(0);
+                    } else if (menuSections.isEmpty()) {
+                        String url = snap.getString("config.contentUrl");
+                        showWebView(url != null ? url : DEFAULT_URL);
+                    }
+                });
+            });
     }
 
     private void buildBottomNav() {
         bottomNav.removeAllViews();
-        if (menuSections.isEmpty()) { bottomNav.setVisibility(View.GONE); return; }
+        if (menuSections.isEmpty()) {
+            bottomNav.setVisibility(View.GONE);
+            return;
+        }
         bottomNav.setVisibility(View.VISIBLE);
-        int active, inactive;
-        try { active=Color.parseColor(primaryColor); } catch(Exception e){ active=Color.parseColor("#6c63ff"); }
-        inactive = Color.parseColor("#6060808");
+        int activeColor;
+        try { activeColor = Color.parseColor(primaryColor); }
+        catch (Exception e) { activeColor = Color.parseColor("#6c63ff"); }
+        int inactiveColor = Color.parseColor("#606080");
 
         for (int i = 0; i < menuSections.size(); i++) {
             final int idx = i;
-            Map<String,Object> s = menuSections.get(i);
-            String title = strOr(s,"title","");
-            String icon  = strOr(s,"icon","▶");
+            Map<String, Object> s = menuSections.get(i);
+            String title = strOr(s, "title", "");
+            String icon  = strOr(s, "icon",  "▶");
             boolean isActive = (idx == activeMenuIndex);
 
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.CENTER);
-            item.setLayoutParams(new LinearLayout.LayoutParams(0,-1,1f));
-            item.setOnClickListener(v -> selectMenu(idx));
+            item.setLayoutParams(new LinearLayout.LayoutParams(0, -1, 1f));
             if (isActive) item.setBackgroundColor(Color.parseColor("#1a1a2e"));
+            item.setOnClickListener(v -> selectMenu(idx));
 
             TextView iv = new TextView(this);
             iv.setText(icon.isEmpty() ? "▶" : icon);
-            iv.setTextSize(18); iv.setGravity(Gravity.CENTER);
-            iv.setTextColor(isActive ? active : Color.parseColor("#606080"));
+            iv.setTextSize(18);
+            iv.setGravity(Gravity.CENTER);
+            iv.setTextColor(isActive ? activeColor : inactiveColor);
 
             TextView tv = new TextView(this);
             tv.setText(title);
-            tv.setTextSize(9); tv.setGravity(Gravity.CENTER);
-            tv.setTextColor(isActive ? active : Color.parseColor("#606080"));
+            tv.setTextSize(9);
+            tv.setGravity(Gravity.CENTER);
+            tv.setTextColor(isActive ? activeColor : inactiveColor);
 
-            item.addView(iv); item.addView(tv);
+            item.addView(iv);
+            item.addView(tv);
             bottomNav.addView(item);
         }
     }
@@ -175,24 +188,24 @@ public class MainActivity extends Activity {
         if (idx >= menuSections.size()) return;
         activeMenuIndex = idx;
         buildBottomNav();
-        Map<String,Object> section = menuSections.get(idx);
-        String type    = strOr(section,"type","web");
-        String url     = strOr(section,"url","");
-        String display = strOr(section,"display","list");
+        Map<String, Object> section = menuSections.get(idx);
+        String type    = strOr(section, "type",    "web");
+        String url     = strOr(section, "url",     "");
+        String display = strOr(section, "display", "list");
 
-        switch(type) {
-            case "m3u": case "iptv":
-                List<Object> rawItems = (List<Object>) section.getOrDefault("items", new ArrayList<>());
-                List<Map<String,Object>> items = new ArrayList<>();
-                for (Object o : rawItems) if (o instanceof Map) items.add((Map<String,Object>)o);
-                showContentList(items, display);
-                break;
-            case "video":
-                openPlayer(url, strOr(section,"title",""), "", "");
-                break;
-            case "web": default:
-                showWebView(url);
-                break;
+        if ("m3u".equals(type) || "iptv".equals(type)) {
+            List<Object> rawItems = (List<Object>) section.get("items");
+            List<Map<String, Object>> items = new ArrayList<>();
+            if (rawItems != null) {
+                for (Object o : rawItems) {
+                    if (o instanceof Map) items.add((Map<String, Object>) o);
+                }
+            }
+            showContentList(items, display);
+        } else if ("video".equals(type)) {
+            openPlayer(url, strOr(section, "title", ""), "", "");
+        } else {
+            showWebView(url);
         }
     }
 
@@ -205,40 +218,53 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showContentList(List<Map<String,Object>> items, String display) {
+    private void showContentList(List<Map<String, Object>> items, String display) {
         webView.setVisibility(View.GONE);
         contentRecycler.setVisibility(View.VISIBLE);
-        boolean isGrid = "grid".equals(display);
-        contentRecycler.setLayoutManager(isGrid
-            ? new GridLayoutManager(this,3)
-            : new LinearLayoutManager(this));
+        if ("grid".equals(display)) {
+            contentRecycler.setLayoutManager(new GridLayoutManager(this, 3));
+        } else {
+            contentRecycler.setLayoutManager(new LinearLayoutManager(this));
+        }
         contentRecycler.setAdapter(new ContentAdapter(this, items, display, primaryColor,
             item -> {
-                String url     = strOr(item,"url","");
-                String title   = strOr(item,"name","");
-                String referer = strOr(item,"referer","");
-                String origin  = strOr(item,"origin","");
+                String url     = strOr(item, "url",     "");
+                String title   = strOr(item, "name",    "");
+                String referer = strOr(item, "referer", "");
+                String origin  = strOr(item, "origin",  "");
                 openPlayer(url, title, referer, origin);
             }));
     }
 
-    public void openPlayer(String url, String title, String referer, String origin) {
+    void openPlayer(String url, String title, String referer, String origin) {
         Intent i = new Intent(this, PlayerActivity.class);
-        i.putExtra("url",url); i.putExtra("title",title);
-        i.putExtra("referer",referer); i.putExtra("origin",origin);
+        i.putExtra("url",     url);
+        i.putExtra("title",   title);
+        i.putExtra("referer", referer);
+        i.putExtra("origin",  origin);
         startActivity(i);
     }
 
-    static String strOr(Map<String,Object> m, String k, String def) {
-        Object v = m.get(k); return (v instanceof String && !((String)v).isEmpty()) ? (String)v : def;
+    static String strOr(Map<String, Object> m, String k, String def) {
+        Object v = m.get(k);
+        return (v instanceof String && !((String) v).isEmpty()) ? (String) v : def;
     }
-    int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
-    @Override public void onBackPressed() {
-        if (webView.getVisibility()==View.VISIBLE && webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
+    int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
     }
-    @Override protected void onDestroy() {
+
+    @Override
+    public void onBackPressed() {
+        if (webView.getVisibility() == View.VISIBLE && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
         super.onDestroy();
         if (configListener != null) configListener.remove();
     }
