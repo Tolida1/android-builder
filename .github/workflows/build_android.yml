@@ -60,53 +60,22 @@ jobs:
         run: |
           echo "$FIREBASE_SA_KEY" > /tmp/sa.json
           pip install google-auth --quiet
-
-          cat > /tmp/get_token.py << 'PYEOF'
-          import sys
-          from google.oauth2 import service_account
-          import google.auth.transport.requests
-          scopes = [
-              "https://www.googleapis.com/auth/devstorage.read_write",
-              "https://www.googleapis.com/auth/datastore"
-          ]
-          c = service_account.Credentials.from_service_account_file(sys.argv[1], scopes=scopes)
-          c.refresh(google.auth.transport.requests.Request())
-          print(c.token)
-          PYEOF
-
+          echo "aW1wb3J0IHN5cwpmcm9tIGdvb2dsZS5vYXV0aDIgaW1wb3J0IHNlcnZpY2VfYWNjb3VudAppbXBvcnQgZ29vZ2xlLmF1dGgudHJhbnNwb3J0LnJlcXVlc3RzCnNjb3BlcyA9IFsiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9kZXZzdG9yYWdlLnJlYWRfd3JpdGUiLCJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9hdXRoL2RhdGFzdG9yZSJdCmMgPSBzZXJ2aWNlX2FjY291bnQuQ3JlZGVudGlhbHMuZnJvbV9zZXJ2aWNlX2FjY291bnRfZmlsZShzeXMuYXJndlsxXSwgc2NvcGVzPXNjb3BlcykKYy5yZWZyZXNoKGdvb2dsZS5hdXRoLnRyYW5zcG9ydC5yZXF1ZXN0cy5SZXF1ZXN0KCkpCnByaW50KGMudG9rZW4p" | base64 -d > /tmp/get_token.py
           TOKEN=$(python3 /tmp/get_token.py /tmp/sa.json)
-
           APK="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.apk"
           AAB="/tmp/${PACKAGE_NAME}_v${VERSION_CODE}.aab"
           BUCKET="${FIREBASE_PROJECT}.firebasestorage.app"
           BASE="builds/${OWNER_ID}/${APP_ID}/v${VERSION_CODE}"
-
-          cat > /tmp/encode.py << 'PYEOF'
-          import sys, urllib.parse
-          print(urllib.parse.quote(sys.argv[1]))
-          PYEOF
-
-          ENC_APK=$(python3 /tmp/encode.py "${BASE}/app.apk")
-          ENC_AAB=$(python3 /tmp/encode.py "${BASE}/app.aab")
-
-          curl -s -X POST \
-            "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${ENC_APK}" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Content-Type: application/vnd.android.package-archive" \
-            --data-binary @"$APK"
-
+          ENC_APK=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${BASE}/app.apk")
+          ENC_AAB=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${BASE}/app.aab")
+          curl -s -X POST "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${ENC_APK}" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/vnd.android.package-archive" --data-binary @"$APK"
           if [ -f "$AAB" ]; then
-            curl -s -X POST \
-              "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${ENC_AAB}" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$AAB"
+            curl -s -X POST "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${ENC_AAB}" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/octet-stream" --data-binary @"$AAB"
           fi
-
-          echo "TOKEN=${TOKEN}" >> $GITHUB_ENV
-          echo "BUCKET=${BUCKET}" >> $GITHUB_ENV
-          echo "ENC_APK=${ENC_APK}" >> $GITHUB_ENV
-          echo "ENC_AAB=${ENC_AAB}" >> $GITHUB_ENV
+          echo "TOKEN=${TOKEN}"       >> $GITHUB_ENV
+          echo "BUCKET=${BUCKET}"     >> $GITHUB_ENV
+          echo "ENC_APK=${ENC_APK}"   >> $GITHUB_ENV
+          echo "ENC_AAB=${ENC_AAB}"   >> $GITHUB_ENV
 
       - name: Firestore Update Success
         if: success()
@@ -119,14 +88,8 @@ jobs:
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           APK_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${ENC_APK}?alt=media"
           AAB_URL="https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${ENC_AAB}?alt=media"
-
-          curl -s -X PATCH \
-            "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus&updateMask.fieldPaths=apkUrl&updateMask.fieldPaths=aabUrl&updateMask.fieldPaths=builtAt&updateMask.fieldPaths=versionCode" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"fields\":{\"buildStatus\":{\"stringValue\":\"ready\"},\"apkUrl\":{\"stringValue\":\"${APK_URL}\"},\"aabUrl\":{\"stringValue\":\"${AAB_URL}\"},\"builtAt\":{\"timestampValue\":\"${NOW}\"},\"versionCode\":{\"integerValue\":\"${VERSION_CODE}\"}}}"
-
-          echo "Firestore updated: ready"
+          curl -s -X PATCH "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus&updateMask.fieldPaths=apkUrl&updateMask.fieldPaths=aabUrl&updateMask.fieldPaths=builtAt&updateMask.fieldPaths=versionCode" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d "{\"fields\":{\"buildStatus\":{\"stringValue\":\"ready\"},\"apkUrl\":{\"stringValue\":\"${APK_URL}\"},\"aabUrl\":{\"stringValue\":\"${AAB_URL}\"},\"builtAt\":{\"timestampValue\":\"${NOW}\"},\"versionCode\":{\"integerValue\":\"${VERSION_CODE}\"}}}"
+          echo "Firestore: ready"
 
       - name: Firestore Update Failed
         if: failure()
@@ -138,21 +101,6 @@ jobs:
         run: |
           echo "$FIREBASE_SA_KEY" > /tmp/sa.json
           pip install google-auth --quiet
-
-          cat > /tmp/get_token_fail.py << 'PYEOF'
-          import sys
-          from google.oauth2 import service_account
-          import google.auth.transport.requests
-          c = service_account.Credentials.from_service_account_file(
-              sys.argv[1], scopes=["https://www.googleapis.com/auth/datastore"])
-          c.refresh(google.auth.transport.requests.Request())
-          print(c.token)
-          PYEOF
-
+          echo "aW1wb3J0IHN5cwpmcm9tIGdvb2dsZS5vYXV0aDIgaW1wb3J0IHNlcnZpY2VfYWNjb3VudAppbXBvcnQgZ29vZ2xlLmF1dGgudHJhbnNwb3J0LnJlcXVlc3RzCmMgPSBzZXJ2aWNlX2FjY291bnQuQ3JlZGVudGlhbHMuZnJvbV9zZXJ2aWNlX2FjY291bnRfZmlsZShzeXMuYXJndlsxXSwgc2NvcGVzPVsiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9kYXRhc3RvcmUiXSkKYy5yZWZyZXNoKGdvb2dsZS5hdXRoLnRyYW5zcG9ydC5yZXF1ZXN0cy5SZXF1ZXN0KCkpCnByaW50KGMudG9rZW4p" | base64 -d > /tmp/get_token_fail.py
           TOKEN=$(python3 /tmp/get_token_fail.py /tmp/sa.json)
-
-          curl -s -X PATCH \
-            "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus" \
-            -H "Authorization: Bearer ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"fields":{"buildStatus":{"stringValue":"failed"}}}'
+          curl -s -X PATCH "https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT}/databases/(default)/documents/apps/${OWNER_ID}/list/${APP_ID}?updateMask.fieldPaths=buildStatus" -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{"fields":{"buildStatus":{"stringValue":"failed"}}}'
