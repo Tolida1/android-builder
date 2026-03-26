@@ -234,15 +234,10 @@ android {
 
 configurations.all {
     resolutionStrategy {
-        // Kotlin stdlib tek sürüme sabitle
         force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
         force 'org.jetbrains.kotlin:kotlin-stdlib-common:1.8.22'
-        // okio-jvm 3.x dex hatası — 2.x'e sabitle
-        force 'com.squareup.okio:okio:2.10.0'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
         exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
-        // okio-jvm 3.x'i tamamen dışla
-        exclude group: 'com.squareup.okio', module: 'okio-jvm'
     }
 }
 
@@ -257,20 +252,14 @@ dependencies {
     implementation 'androidx.recyclerview:recyclerview:1.3.0'
     implementation 'androidx.multidex:multidex:2.0.1'
 
-    // ExoPlayer Media3 1.2.1
+    // ExoPlayer Media3 1.2.1 — OkHttp yok, DefaultHttpDataSource kullanıyoruz
     implementation 'androidx.media3:media3-exoplayer:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-dash:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-rtsp:1.2.1'
     implementation 'androidx.media3:media3-exoplayer-smoothstreaming:1.2.1'
     implementation 'androidx.media3:media3-ui:1.2.1'
-    implementation 'androidx.media3:media3-datasource-okhttp:1.2.1'
 
-    // OkHttp 3.x — okio 2.x kullanır, dex sorunu yok
-    implementation('com.squareup.okhttp3:okhttp:3.12.13') {
-        exclude group: 'com.squareup.okio', module: 'okio-jvm'
-    }
-    implementation 'com.squareup.okio:okio:2.10.0'
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
 }
 ABEOF
